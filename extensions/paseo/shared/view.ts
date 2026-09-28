@@ -47,7 +47,10 @@ export interface Unit {
   kind: "team" | "solo" | "closed";
   id: string;
   cwd?: string;
-  /** The members' tree; ctx (tokens) and turns only for a worker top shows them for. */
+  /** A solo's ctx (tokens) and turns, from its transcript, when top shows them. */
+  ctx?: number;
+  turns?: number;
+  /** The members' tree; ctx (tokens) and turns only for a member top shows them for. */
   members?: { id: string; depth: number; prefix: string; cwd: string; ctx?: number; turns?: number }[];
 }
 
@@ -213,8 +216,8 @@ export function farm(ps: Ps, dir?: string): ProjectView[] {
           harnessId: s.harness ?? "",
           model: modelId(s.model),
           modelFull: modelLabel(s.model, undefined),
-          ctx: "",
-          turns: "",
+          ctx: unit.ctx !== undefined ? tokens(unit.ctx) : "",
+          turns: unit.turns !== undefined ? String(unit.turns) : "",
           unacked: s.unacked ?? 0,
           created: s.created_at,
           since: s.state_since,

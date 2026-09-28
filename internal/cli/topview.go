@@ -398,16 +398,21 @@ func (m *topModel) list(width int, now time.Time) ([]string, []string) {
 		entries = append(entries, entry{row: &r})
 		all = append(all, r.cells)
 	}
-	member := func(g dirGroup, tr treeRow, closed bool) {
-		mem := tr.m
-		state, _ := stateIcon(mem.State)
-		ctx, turns := "-", "-"
-		if ws, ok := stats[mem.ID]; ok {
+	// usage is id's ctx and turns as cells, "-" when no log of it was read.
+	usage := func(id string) (ctx, turns string) {
+		ctx, turns = "-", "-"
+		if ws, ok := stats[id]; ok {
 			if ws.hasCtx {
 				ctx = tokens(ws.ctx)
 			}
 			turns = fmt.Sprint(ws.turns)
 		}
+		return ctx, turns
+	}
+	member := func(g dirGroup, tr treeRow, closed bool) {
+		mem := tr.m
+		state, _ := stateIcon(mem.State)
+		ctx, turns := usage(mem.ID)
 		cwd := relCwd(g.dir, mem.Cwd)
 		addRow(trow{id: mem.ID, state: mem.State, dim: closed || mem.State == "gone" || tr.parentGone, cells: cellsOf(map[string]string{
 			"name": tr.prefix + mem.Name, "role": mem.Role, "state": state, "harness": harnessLabel(mem.Harness, mem.Headless),
@@ -424,9 +429,10 @@ func (m *topModel) list(width int, now time.Time) ([]string, []string) {
 			case u.solo != nil:
 				s := u.solo
 				state, _ := stateIcon(s.State)
+				ctx, turns := usage(s.ID)
 				addRow(trow{id: s.ID, state: s.State, cells: cellsOf(map[string]string{
 					"name": "solo " + s.Name, "state": state, "harness": harnessLabel(s.Harness, false),
-					"model": modelID(s.Model), "unacked": fmt.Sprint(s.Unacked), "age": ago(s.CreatedAt, now),
+					"model": modelID(s.Model), "ctx": ctx, "turns": turns, "unacked": fmt.Sprint(s.Unacked), "age": ago(s.CreatedAt, now),
 					"since": ago(s.StateSince, now), "cwd": cmp.Or(relCwd(g.dir, s.Cwd), " ")})})
 			case u.closed != nil:
 				c := u.closed
@@ -561,8 +567,8 @@ func (m *topModel) sidebar(w, h int, now time.Time) []string {
 	}
 
 	if m.sideTab == sideTail {
-		if mem == nil || !logged(*mem) {
-			return []string{" " + stMuted.Render("No tail: its harness keeps no driver log here.")}
+		if !m.tailable(m.sel) {
+			return []string{" " + stMuted.Render("No tail: piggery has no log of it to read.")}
 		}
 		var lines []string
 		if m.tail.worker == m.sel { // a fetch in flight may still carry the previous worker's
@@ -611,14 +617,13 @@ func (m *topModel) sidebar(w, h int, now time.Time) []string {
 			kind += " · gate"
 		}
 		out = append(out, kv("team", team.Name), kv("kind", kind), kv("model", modelLabel(mem.Model, mem.Thinking)))
-		if logged(*mem) {
-			ws := m.stats()[mem.ID]
-			ctx := "-"
-			if ws.hasCtx {
-				ctx = tokens(ws.ctx)
-			}
-			out = append(out, kv("ctx", ctx), kv("turns", fmt.Sprint(ws.turns)))
+	}
+	if ws, ok := m.stats()[ref]; ok {
+		ctx := "-"
+		if ws.hasCtx {
+			ctx = tokens(ws.ctx)
 		}
+		out = append(out, kv("ctx", ctx), kv("turns", fmt.Sprint(ws.turns)))
 	}
 	out = append(out, " "+came, kv("since", ago(since, now)), kv("unacked", fmt.Sprint(unacked)))
 	if mem != nil {

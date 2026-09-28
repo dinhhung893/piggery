@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0 - 2026-09-29
+
+Breaking: a team template with a `tools:` section is now refused. Give its roles `send` and say in
+their prompt what to send to whom, then delete the section. An installed built-in template you
+edited is not updated for you; edit it the same way.
+
+- Every role of the built-in templates talks with `send` (no `done`/`ask`/`answer` tools).
+- Declarative tools are removed: a template with a `tools:` section is refused; use `send`.
+- A new session's default name is one word.
+- Interactive sessions (pi, Claude, Codex; solos too) show ctx, turns and a tail in `top`, `ps --json` and `piggery tail`, read from the harness's own transcript.
+
 ## v0.1.0 - 2026-09-28
 
 First release.

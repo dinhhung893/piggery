@@ -429,7 +429,11 @@ func (s *server) handle(ctx context.Context, cn *conn, req proto.Request) proto.
 		case proto.VerbTail:
 			return call(req, func(a core.WorkerLogArgs) (any, error) {
 				w, err := s.eng.WorkerLog(ctx, a)
-				return proto.TailResult{WorkerLog: w, Path: local.LogPath(s.dir, w.ParticipantID, w.RunID)}, err
+				r := proto.TailResult{WorkerLog: w}
+				if w.RunID != "" {
+					r.Path = local.LogPath(s.dir, w.ParticipantID, w.RunID)
+				}
+				return r, err
 			})
 		case proto.VerbJoin:
 			return call(req, func(a core.JoinArgs) (any, error) { return s.eng.Join(ctx, a) })
@@ -463,7 +467,7 @@ func (s *server) handle(ctx context.Context, cn *conn, req proto.Request) proto.
 		}
 	case proto.VerbSend, proto.VerbInbox, proto.VerbCompletion, proto.VerbWho, proto.VerbBoard,
 		proto.VerbWatchAdd, proto.VerbWatchList, proto.VerbAgent, proto.VerbIdentify, proto.VerbPresence,
-		proto.VerbTool, proto.VerbHarnessEvent:
+		proto.VerbHarnessEvent:
 	default:
 		return errResponse(req.ID, &core.Error{Code: core.CodeInvalid, Message: "unknown verb " + req.Verb})
 	}
@@ -545,8 +549,6 @@ func (s *server) handle(ctx context.Context, cn *conn, req proto.Request) proto.
 		})
 	case proto.VerbPresence:
 		return call(req, func(a core.PresenceArgs) (any, error) { return nil, s.eng.Presence(ctx, c, a) })
-	case proto.VerbTool:
-		return call(req, func(a core.ToolArgs) (any, error) { return s.eng.Tool(ctx, c, a) })
 	case proto.VerbHarnessEvent:
 		return call(req, func(a core.HarnessEventArgs) (any, error) { return s.eng.HarnessEvent(ctx, c, a) })
 	default: // VerbAgent

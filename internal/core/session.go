@@ -100,7 +100,7 @@ func (e *Engine) Identify(ctx context.Context, c Caller, a IdentifyArgs) (Identi
 			tools = []string{}
 		}
 		res = IdentifyResult{ParticipantID: p.id, RunID: p.run, Name: p.name, TeamID: p.team, Role: p.role,
-			Tools: tools, RoleCard: card, ToolSpecs: m.toolSpecs(p.role), ProtocolVersion: ProtocolVersion}
+			Tools: tools, RoleCard: card, ProtocolVersion: ProtocolVersion}
 		return nil
 	})
 	if err != nil {
@@ -210,28 +210,21 @@ func (t *txn) roleCard(p participant, m manifest) (string, error) {
 		b.WriteString("- (none yet)\n")
 	}
 	b.WriteString("\nMail from others arrives as a user message with a header naming the sender and the message's #N.")
-	b.WriteString(toolTips(p.toolPrefix, m.Roles[p.role].Tools, m))
+	b.WriteString(toolTips(p.toolPrefix, m.Roles[p.role].Tools))
 	b.WriteString("\n")
 	return b.String(), nil
 }
 
 // toolTips tells the model how to answer and look around using only tools its role has: a
 // tip naming a tool the role lacks makes the model call a tool that does not exist.
-func toolTips(prefix string, tools []string, m manifest) string {
+func toolTips(prefix string, tools []string) string {
 	has := map[string]bool{}
-	var declared []string
 	for _, name := range tools {
 		has[name] = true
-		if _, ok := m.Tools[name]; ok {
-			declared = append(declared, prefix+name)
-		}
 	}
 	var b strings.Builder
-	switch {
-	case has["send"]:
+	if has["send"] {
 		b.WriteString(" Reply with the " + prefix + "send tool: to=<sender name>, reply_to=<its #N>.")
-	case len(declared) > 0:
-		b.WriteString(" You have no free send; answer through your tools: " + strings.Join(declared, ", ") + ".")
 	}
 	if has["inbox"] {
 		b.WriteString(" Use " + prefix + "inbox to read pending mail.")

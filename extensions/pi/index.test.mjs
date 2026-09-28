@@ -79,7 +79,7 @@ test("the extension against a fake daemon", async (t) => {
 	const { default: piggery } = await import("./index.ts");
 	piggery(pi);
 	const glm = { provider: "HP", id: "glm-5.3-flash" };
-	const ctx = { mode: "rpc", hasUI: false, cwd: process.env.HOME, isIdle: () => true, model: glm, sessionManager: { getSessionId: () => "sess-1" } };
+	const ctx = { mode: "rpc", hasUI: false, cwd: process.env.HOME, isIdle: () => true, model: glm, sessionManager: { getSessionId: () => "sess-1", getSessionFile: () => "/s/sess-1.jsonl" } };
 	handlers.session_start({}, ctx);
 	await until(() => calls.some((c) => c.verb === "identify" && c.as === "p1"));
 
@@ -120,6 +120,7 @@ test("the extension against a fake daemon", async (t) => {
 		const rejoin = calls.filter((c) => c.verb === "join.auto");
 		assert.equal(rejoin.length, 2);
 		assert.equal(rejoin[1].args.harness_ref, "sess-1"); // the same pi session, placed again
+		assert.deepEqual(rejoin[1].args.transcript, { path: "/s/sess-1.jsonl", format: "pi" }); // its file, for top
 		const afterClose = calls.slice(calls.findIndex((c) => c.args?.action === "close") + 1);
 		assert.ok(afterClose.every((c) => c.as !== "p1"), "nothing more as the closed team's participant");
 		assert.deepEqual(active.sort(), ["piggery_agent", "piggery_inbox", "piggery_send", "piggery_who"]);

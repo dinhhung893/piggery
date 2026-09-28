@@ -1,7 +1,8 @@
 # supervisor + executors.
-# The supervisor splits work and spawns executor workers; an executor hands back with `done` or asks with
-# `ask` (declarative tools: one message of a fixed kind to whoever spawned it). The review loop
-# is the supervisor reading the handback and sending kind=rework, or closing. No extra state.
+# The supervisor splits work and spawns executor workers. Every role talks with `send`; routing is
+# the fence: an executor reaches only the supervisor. The prompts say how to hand a task back (a
+# `send` with kind handback) and that questioning the task mid-way is welcome. The review loop is
+# the supervisor reading the handback and replying with kind=rework, or closing. No extra state.
 model: supervisor-executor
 summary: A supervisor splits a goal (code, research, writing, operations…) into checkable tasks and judges each; executors do them, in parallel only when that helps.
 auto_join_role: supervisor   # the founder's role when a session founds a team from this template
@@ -21,7 +22,7 @@ roles:
   executor:
     description: Does its tasks one at a time, checks each, and hands each back to the supervisor (or asks).
     instructions_file: prompts/executor.md
-    tools: [inbox, who, done, ask]           # no free send
+    tools: [send, inbox, who]
     can_spawn: []
     can_pin: false
     can_set_cwd: false
@@ -34,15 +35,6 @@ routing:
   - {from: supervisor, to: executor, allow: true, cc: []}
   - {from: executor, to: supervisor, allow: true, cc: []}
   - {from: supervisor, to: notify, allow: true, cc: []}
-tools:
-  done:
-    description: Hand your finished work back to the supervisor who spawned you.
-    params: {summary: string}
-    send: {kind: handback, to: spawned_by}
-  ask:
-    description: Ask the supervisor who spawned you a question; keep working if you can.
-    params: {question: string}
-    send: {kind: ask, to: spawned_by}
 timers:
   - {on: executor, notify: reports_to, silent_for: 20m}
 limits:                  # none: no limit

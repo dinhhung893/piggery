@@ -46,6 +46,9 @@ type claudeHookInput struct {
 	// AgentID is set only when the hook fires inside a subagent (Agent tool): same session_id and
 	// prompt_id as the turn that called it (capture hooks-subagent.jsonl).
 	AgentID string `json:"agent_id"`
+	// TranscriptPath is the harness's own transcript of the session (Claude: its projects file,
+	// Codex: its rollout); null for a Codex ephemeral thread, which writes none.
+	TranscriptPath string `json:"transcript_path"`
 }
 
 // claudeHookEvent maps a Claude hook event and its input to the standard event (ok false: not one
@@ -209,8 +212,14 @@ func (e *env) runHook(harness, hook string, stdin io.Reader, stderr io.Writer) {
 		}
 		join = func(source string) error {
 			var jr core.JoinResult
-			_, err := c.CallInto(proto.VerbJoinAuto, core.JoinAutoArgs{Cwd: in.Cwd, Harness: harness, Mode: "interactive",
-				HarnessRef: in.SessionID, Source: source, Host: host}, &jr)
+			a := core.JoinAutoArgs{Cwd: in.Cwd, Harness: harness, Mode: "interactive",
+				HarnessRef: in.SessionID, Source: source, Host: host}
+			// The session's transcript, in the format named after its harness (transcript_<harness>.go);
+			// none: the stored one stays. A subagent's hook never joins (hookEvent drops it).
+			if in.TranscriptPath != "" {
+				a.Transcript = &core.Transcript{Path: in.TranscriptPath, Format: harness}
+			}
+			_, err := c.CallInto(proto.VerbJoinAuto, a, &jr)
 			return err
 		}
 		if hook == "SessionStart" && join(in.Source) != nil {

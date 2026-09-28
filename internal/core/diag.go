@@ -26,8 +26,7 @@ type WhyArgs struct {
 }
 
 type WhyResult struct {
-	WhyVerdict           // the send verb
-	Tools      []WhyTool `json:"tools,omitempty"` // declarative tools of From whose send.to is To
+	WhyVerdict // the send verb
 }
 
 // WhyVerdict is one path through the send gate: its checks and the outcome.
@@ -38,17 +37,8 @@ type WhyVerdict struct {
 	Layer   string      `json:"layer,omitempty"`
 }
 
-// WhyTool is the verdict of calling a declarative tool that sends to To.
-type WhyTool struct {
-	Tool string `json:"tool"`
-	Kind string `json:"kind"`
-	WhyVerdict
-}
-
 // Why runs the send gate for a message From -> To as it stands now, with the same function
-// Send uses, and returns each check and the verdict; then, for each declarative tool of From
-// whose send.to resolves to To, the gate as the tool verb runs it (under that tool's grant).
-// Nothing is written: the transaction is always rolled back and a denial's event is dropped.
+// Send uses, and returns each check and the verdict. Nothing is written: the transaction is always rolled back and a denial's event is dropped.
 func (e *Engine) Why(ctx context.Context, a WhyArgs) (WhyResult, error) {
 	var out WhyResult
 	err := e.readOnly(ctx, func(t *txn) error {
@@ -61,42 +51,19 @@ func (e *Engine) Why(ctx context.Context, a WhyArgs) (WhyResult, error) {
 			return err
 		}
 		caller := fmt.Sprintf("%s is %s, role %s, run %s, state %s", a.From, p.id, p.role, p.run, p.state)
-		if out.WhyVerdict, err = t.whyGate(p, m, SendArgs{To: a.To, Body: "(why)"}, "send", caller); err != nil {
-			return err
-		}
-		var to string // To's participant id, when it is one in From's team
-		if err := t.QueryRowContext(t.ctx, `SELECT id FROM participants WHERE team_id=? AND (id=? OR name=?)`,
-			p.team, a.To, a.To).Scan(&to); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return internal(err)
-		}
-		for _, name := range m.Roles[p.role].Tools {
-			spec, ok := m.Tools[name]
-			if !ok || to == "" {
-				continue // a built-in, or To is not a participant
-			}
-			target, err := t.toolTarget(p, spec.Send.To)
-			if err != nil || target != to {
-				continue // this tool does not send to To
-			}
-			v, err := t.whyGate(p, m, SendArgs{To: target, Kind: spec.Send.Kind, Body: "(why)"}, name,
-				fmt.Sprintf("tool %s sends kind %s to %s = %s", name, spec.Send.Kind, spec.Send.To, a.To))
-			if err != nil {
-				return err
-			}
-			out.Tools = append(out.Tools, WhyTool{Tool: name, Kind: spec.Send.Kind, WhyVerdict: v})
-		}
-		return nil
+		out.WhyVerdict, err = t.whyGate(p, m, SendArgs{To: a.To, Body: "(why)"}, caller)
+		return err
 	})
 	return out, err
 }
 
-// whyGate runs sendGate for one path (the send verb, or a declarative tool under its grant)
-// with a trace that starts with the caller line, and turns its result into a verdict.
-func (t *txn) whyGate(p participant, m manifest, a SendArgs, tool, caller string) (WhyVerdict, error) {
+// whyGate runs sendGate with a trace that starts with the caller line, and turns its result into
+// a verdict.
+func (t *txn) whyGate(p participant, m manifest, a SendArgs, caller string) (WhyVerdict, error) {
 	var v WhyVerdict
 	tr := &gateTrace{}
 	tr.add("caller", "pass", "", caller)
-	g, err := t.sendGate(p, m, a, tool, newID(t.now), tr)
+	g, err := t.sendGate(p, m, a, newID(t.now), tr)
 	var d *denial
 	switch {
 	case errors.As(err, &d):

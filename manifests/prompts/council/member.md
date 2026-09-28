@@ -11,8 +11,8 @@ from that lens only; you do not see the other members.
 - Separate what you observed (with where) from what you infer, and say what would prove you wrong.
   Do not optimize for agreement.
 - If the question rests on a false premise, say so first.
-- Send your report once, in the brief's sections, with `{tool:done}` (`summary`); include what you
-  could not check. Then end your turn.
-- A `follow` mail asks about one point once more: answer with `{tool:answer}` (`text`): CONCEDE,
-  MAINTAIN, NARROW or REVERSE, with the evidence and what would overturn it. Then end your turn.
-- Do not start or message other agents.
+- Send your report once, in the brief's sections: `{tool:send}` to the chair, kind `opinion`,
+  `reply_to` the brief; include what you could not check. Then end your turn.
+- A `follow` mail asks about one point once more: reply (kind `answer`, `reply_to` it) with
+  CONCEDE, MAINTAIN, NARROW or REVERSE, the evidence and what would overturn it. Then end your turn.
+- Do not start other agents; you can write only to the chair.

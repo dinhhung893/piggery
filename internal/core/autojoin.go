@@ -15,7 +15,7 @@ type JoinAutoArgs struct {
 	Harness    string `json:"harness,omitempty"`
 	Mode       string `json:"mode,omitempty"`
 	HarnessRef string `json:"harness_ref"`    // same session -> same participant
-	Name       string `json:"name,omitempty"` // default adjective-noun from harness_ref (names.go); suffixed on collision
+	Name       string `json:"name,omitempty"` // default one word from harness_ref (names.go); suffixed on collision
 	// Source is why the harness started this session (Claude: startup|resume|clear|compact);
 	// recorded only, the host decides.
 	Source string `json:"source,omitempty"`
@@ -24,6 +24,25 @@ type JoinAutoArgs struct {
 	// returns it with its run (the ref becomes one of its refs), and callers may authenticate by
 	// host (AuthenticateHost).
 	Host string `json:"host,omitempty"`
+	// Transcript is the harness's own file of this session, kept on the participant for the CLI's
+	// ctx, turns and tail (never read by the daemon). nil or an empty path keeps the one stored.
+	Transcript *Transcript `json:"transcript,omitempty"`
+}
+
+// Transcript is a session's own file as its harness writes it, and the format a CLI reader knows
+// it by (pi, claude, codex). Core stores and returns it as sent.
+type Transcript struct {
+	Path   string `json:"path"`
+	Format string `json:"format"`
+}
+
+// transcriptCols are a.Transcript's path and format for an UPDATE with COALESCE: NULL when none
+// was reported, so the stored one stays.
+func (a JoinAutoArgs) transcriptCols() (any, any) {
+	if a.Transcript == nil || a.Transcript.Path == "" {
+		return nil, nil
+	}
+	return a.Transcript.Path, a.Transcript.Format
 }
 
 // JoinAuto registers session a. A session whose newest participant is a solo or a member of an open
@@ -51,7 +70,9 @@ func (e *Engine) JoinAuto(ctx context.Context, a JoinAutoArgs) (JoinResult, erro
 				ORDER BY created_at DESC, rowid DESC LIMIT 1`, a.Host).Scan(&id, &team, &run)
 			if err == nil {
 				res = JoinResult{ID: id, TeamID: team, RunID: run} // no token: it authenticates by host
-				if _, err := t.ExecContext(t.ctx, `UPDATE participants SET session_ref=? WHERE id=?`, a.HarnessRef, id); err != nil {
+				path, format := a.transcriptCols()
+				if _, err := t.ExecContext(t.ctx, `UPDATE participants SET session_ref=?, transcript=COALESCE(?,transcript),
+					transcript_format=COALESCE(?,transcript_format) WHERE id=?`, a.HarnessRef, path, format, id); err != nil {
 					return internal(err)
 				}
 				_, err := t.ExecContext(t.ctx, `INSERT INTO participant_refs(ref, participant_id) SELECT ?, ?
@@ -82,9 +103,12 @@ func (e *Engine) JoinAuto(ctx context.Context, a JoinAutoArgs) (JoinResult, erro
 			return errf(CodeInvalid, "participant is live")
 		case err == nil: // resume: same participant, new run and token
 			res.ID, res.TeamID = p.id, p.team
+			path, format := a.transcriptCols()
 			if _, err := t.ExecContext(t.ctx, `UPDATE participants SET run_id=?, token_hash=?, last_turn_end=NULL,
-				cwd=?, harness=COALESCE(?,harness), mode=COALESCE(?,mode), host=?, session_ref=? WHERE id=?`,
-				res.RunID, hashToken(token), cwd, nullStr(a.Harness), nullStr(a.Mode), nullStr(a.Host), a.HarnessRef, p.id); err != nil {
+				cwd=?, harness=COALESCE(?,harness), mode=COALESCE(?,mode), host=?, session_ref=?,
+				transcript=COALESCE(?,transcript), transcript_format=COALESCE(?,transcript_format) WHERE id=?`,
+				res.RunID, hashToken(token), cwd, nullStr(a.Harness), nullStr(a.Mode), nullStr(a.Host), a.HarnessRef,
+				path, format, p.id); err != nil {
 				return internal(err)
 			}
 			p.run = res.RunID
@@ -102,12 +126,13 @@ func (e *Engine) JoinAuto(ctx context.Context, a JoinAutoArgs) (JoinResult, erro
 }
 
 // moveSession hands what a live session reported (its host, capabilities, tool prefix, model
-// and thinking, current session id) and its other session ids from participant from to participant to, when the
+// and thinking, current session id, transcript) and its other session ids from participant from to participant to, when the
 // session goes on as another participant (found by a member, reopen by the old gate). Without
 // it, auth by host would find nobody and resuming a /clear'd id would miss the new row.
 func (t *txn) moveSession(from, to string) error {
-	if _, err := t.ExecContext(t.ctx, `UPDATE participants SET (host, capabilities, tool_prefix, session_model, session_thinking, session_ref) =
-		(SELECT host, capabilities, tool_prefix, session_model, session_thinking, session_ref FROM participants WHERE id=?) WHERE id=?`,
+	if _, err := t.ExecContext(t.ctx, `UPDATE participants SET (host, capabilities, tool_prefix, session_model, session_thinking,
+		session_ref, transcript, transcript_format) = (SELECT host, capabilities, tool_prefix, session_model, session_thinking,
+		session_ref, transcript, transcript_format FROM participants WHERE id=?) WHERE id=?`,
 		from, to); err != nil {
 		return internal(err)
 	}
@@ -119,19 +144,27 @@ func (t *txn) moveSession(from, to string) error {
 }
 
 // insertSession adds harness session a as a new idle participant of role in teamID ("" = a
-// solo, no team and no role), named from a (suffixed on collision), and returns its id.
+// solo, no team and no role), named a.Name (suffixed on collision) or else a free word
+// (freeWord), and returns its id.
 func (t *txn) insertSession(teamID, role, cwd, run, token string, a JoinAutoArgs) (string, error) {
-	name, err := t.freeName(teamID, autoName(a))
+	var name string
+	var err error
+	if n := strings.TrimSpace(a.Name); n != "" && !isReserved(n) {
+		name, err = t.freeName(teamID, n)
+	} else {
+		name, err = t.freeWord(teamID, a.HarnessRef)
+	}
 	if err != nil {
 		return "", err
 	}
 	id := newID(t.now)
+	path, format := a.transcriptCols()
 	if _, err := t.ExecContext(t.ctx, `INSERT INTO participants
 		(id, run_id, kind, harness, mode, name, cwd, team_id, role, state, state_since, last_activity,
-		 token_hash, harness_ref, created_at, host, session_ref)
-		VALUES (?,?,'agent',?,?,?,?,?,?,'idle',?,?,?,?,?,?,?)`,
+		 token_hash, harness_ref, created_at, host, session_ref, transcript, transcript_format)
+		VALUES (?,?,'agent',?,?,?,?,?,?,'idle',?,?,?,?,?,?,?,?,?)`,
 		id, run, nullStr(a.Harness), nullStr(a.Mode), name, cwd, nullStr(teamID), nullStr(role), t.now, t.now,
-		hashToken(token), a.HarnessRef, t.now, nullStr(a.Host), a.HarnessRef); err != nil {
+		hashToken(token), a.HarnessRef, t.now, nullStr(a.Host), a.HarnessRef, path, format); err != nil {
 		return "", internal(err)
 	}
 	return id, nil
@@ -148,13 +181,6 @@ func (m manifest) sessionRole() string {
 	return ""
 }
 
-func autoName(a JoinAutoArgs) string {
-	if n := strings.TrimSpace(a.Name); n != "" && !isReserved(n) {
-		return n
-	}
-	return wordName(a.HarnessRef)
-}
-
 // freeName returns name, or name-2, name-3, … when taken in the team (teamID "": by a live
 // solo).
 func (t *txn) freeName(teamID, name string) (string, error) {
@@ -163,17 +189,28 @@ func (t *txn) freeName(teamID, name string) (string, error) {
 		if i > 1 {
 			cand = fmt.Sprintf("%s-%d", name, i)
 		}
-		var n int
-		q := `SELECT COUNT(*) FROM participants WHERE team_id=? AND name=?`
-		args := []any{teamID, cand}
-		if teamID == "" {
-			q, args = `SELECT COUNT(*) FROM participants WHERE team_id IS NULL AND state<>'gone' AND name=?`, []any{cand}
-		}
-		if err := t.QueryRowContext(t.ctx, q, args...).Scan(&n); err != nil {
-			return "", internal(err)
-		}
-		if n == 0 {
-			return cand, nil
+		taken, err := t.nameTaken(teamID, cand, false)
+		if err != nil || !taken {
+			return cand, err
 		}
 	}
+}
+
+// nameTaken: name is a participant's in the team (teamID "": a live solo's), or, with teams,
+// an open team's (a send to it would reach that team: resolveSendTarget).
+func (t *txn) nameTaken(teamID, name string, teams bool) (bool, error) {
+	var n int
+	q := `SELECT (SELECT COUNT(*) FROM participants WHERE team_id=? AND name=?)`
+	args := []any{teamID, name}
+	if teamID == "" {
+		q, args = `SELECT (SELECT COUNT(*) FROM participants WHERE team_id IS NULL AND state<>'gone' AND name=?)`, []any{name}
+	}
+	if teams {
+		q += ` + (SELECT COUNT(*) FROM teams WHERE closed_at IS NULL AND name=?)`
+		args = append(args, name)
+	}
+	if err := t.QueryRowContext(t.ctx, q, args...).Scan(&n); err != nil {
+		return false, internal(err)
+	}
+	return n > 0, nil
 }

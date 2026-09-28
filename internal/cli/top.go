@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -96,8 +95,9 @@ const (
 func newTopModel(c *Client, dir string) *topModel {
 	h := help.New()
 	h.Styles = helpStyles()
+	// Its first read starts from what ps --json last read (logcache.go), not from the start of each log.
 	return &topModel{c: c, dir: dir, side: true, events: true, mouse: true, open: map[string]bool{}, keys: newTopKeys(), help: h,
-		cols: server.DisplayColumns}
+		cols: server.DisplayColumns, logs: loadLogCache(dir)}
 }
 
 // topKeys are top's keys; the footer shows the short list, ? the full one.
@@ -132,20 +132,25 @@ func (k topKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.Next, k.Prev}, {k.Down}, {k.Preview, k.Pane, k.Close}, {k.Events, k.Mouse, k.Help, k.Quit}}
 }
 
-// tailState follows one run's log incrementally.
+// tailState follows one log incrementally: a worker's run log or a session's transcript.
 type tailState struct {
 	worker, path string
 	off          int64
 	lines        []string
+	reader       transcriptReader // path's reader, kept with off
 }
 
-// logState is what top has read of one run log: up to off, its turn_end records, and the
-// usage of its latest assistant message_end (the context then, not a sum).
+// logState is what was read of one log (a worker's run log or a session's transcript): up to off,
+// its turns, and its latest context (not a sum). ps --json keeps it between calls in the cache
+// (logcache.go); top keeps it in memory.
 type logState struct {
 	off    int64
 	turns  int
 	tokens int
-	seen   bool // an assistant message_end with usage was read
+	seen   bool             // a record with the context was read
+	mark   string           // mark() of the bytes before off: a rewritten file is read again
+	reader transcriptReader // the file's reader, kept so its state follows off
+	state  json.RawMessage  // a resumable reader's saved state, until reader is made from it
 }
 
 // workerStats is a worker's context now (its current run) and turns over its whole life (all
@@ -167,10 +172,10 @@ type tick struct{}
 
 func (m *topModel) Init() tea.Cmd { return m.fetch() }
 
-// fetch reads the snapshot and, when on, the selected worker's new log lines. One fetch is in
+// fetch reads the snapshot and, when on, the selected participant's new log lines. One fetch is in
 // flight at a time (the next is scheduled when it lands), so the client is not shared.
 func (m *topModel) fetch() tea.Cmd {
-	sel, on, tail, logs := m.sel, m.sideShown() && m.sideTab == sideTail && m.headless(m.sel), m.tail, m.logs
+	sel, on, tail, logs := m.sel, m.sideShown() && m.sideTab == sideTail && m.tailable(m.sel), m.tail, m.logs
 	return func() tea.Msg {
 		var f fetched
 		if _, f.err = m.c.CallInto(proto.VerbPs, core.StateArgs{Events: topEvents}, &f.ps); f.err != nil {
@@ -185,8 +190,20 @@ func (m *topModel) fetch() tea.Cmd {
 			f.tail = tailState{worker: sel, lines: []string{"(" + err.Error() + ")"}}
 			return f
 		}
-		if tail.worker != sel || tail.path != r.Path {
-			tail = tailState{worker: sel, path: r.Path}
+		path, newReader, err := tailSource(r)
+		if err != nil {
+			f.tail = tailState{worker: sel, lines: []string{"(" + err.Error() + ")"}}
+			return f
+		}
+		if tail.worker != sel || tail.path != path {
+			// A new log: its last lines, read back from its end (not the whole file).
+			lines, off, reader, err := lastLines(path, newReader, tailKeep, false)
+			if err != nil {
+				f.err = err
+				return f
+			}
+			f.tail = tailState{worker: sel, path: path, off: off, lines: lines, reader: reader}
+			return f
 		}
 		recs, off, err := readRecords(tail.path, tail.off)
 		if err != nil {
@@ -196,7 +213,7 @@ func (m *topModel) fetch() tea.Cmd {
 		tail.off = off
 		tail.lines = append([]string(nil), tail.lines...)
 		for _, rec := range recs {
-			if l, ok := tailLine(rec); ok {
+			if l := tail.reader.read(rec).line; l != "" {
 				tail.lines = append(tail.lines, l)
 			}
 		}
@@ -277,32 +294,33 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// readLogs brings every run log of each headless member up to date, reading only what each
-// file gained since the last call (prev, by path; not modified). A member's logs are one file
-// per run (driver/local.LogPath), so turns add up across resumes.
+// readLogs brings every run log of each headless member, and each session's transcript, up to
+// date, reading only what each file gained since the last call (prev, by path; not modified). A
+// worker's logs are one file per run (driver/local.LogPath), so turns add up across resumes; a
+// session's are its transcript's.
 func readLogs(dir string, ps proto.PsResult, prev map[string]logState) map[string]logState {
 	out := map[string]logState{}
+	session := func(t *core.Transcript) {
+		if newReader, ok := sessionReader(t); ok {
+			if st, ok := advanceLog(t.Path, newReader, prev[t.Path]); ok {
+				out[t.Path] = st
+			}
+		}
+	}
+	for _, s := range ps.Solos {
+		session(s.Transcript)
+	}
 	for _, t := range teamsOf(ps) {
 		for _, mem := range t.Members {
 			if !logged(mem) {
+				session(mem.Transcript)
 				continue
 			}
 			paths, _ := filepath.Glob(filepath.Join(filepath.Dir(local.LogPath(dir, mem.ID, "run")), "*.jsonl"))
 			for _, path := range paths {
-				st := prev[path]
-				recs, off, err := readRecords(path, st.off)
-				if err != nil {
-					continue
+				if st, ok := advanceLog(path, formats[driverLog], prev[path]); ok {
+					out[path] = st
 				}
-				st.off = off
-				for _, rec := range recs {
-					if n, ok := contextSize(rec); ok {
-						st.tokens, st.seen = n, true
-					} else if bytes.Contains(rec, []byte(`"turn_end"`)) && recordType(rec) == "turn_end" {
-						st.turns++
-					}
-				}
-				out[path] = st
 			}
 		}
 	}
@@ -337,12 +355,25 @@ func contextSize(rec []byte) (int, bool) {
 	return u.Input + u.Output + u.CacheRead + u.CacheWrite, true
 }
 
-// stats is each headless worker's context (current run) and turns (all runs).
+// stats is each headless worker's context (current run) and turns (all runs), and each session's
+// from its transcript; none for a participant with no log read.
 func (m *topModel) stats() map[string]workerStats {
 	out := map[string]workerStats{}
+	session := func(id string, t *core.Transcript) {
+		if _, ok := sessionReader(t); !ok {
+			return
+		}
+		if st, ok := m.logs[t.Path]; ok {
+			out[id] = workerStats{ctx: st.tokens, hasCtx: st.seen, turns: st.turns}
+		}
+	}
+	for _, s := range m.ps.Solos {
+		session(s.ID, s.Transcript)
+	}
 	for _, t := range teamsOf(m.ps) {
 		for _, mem := range t.Members {
 			if !logged(mem) {
+				session(mem.ID, mem.Transcript)
 				continue
 			}
 			var ws workerStats
@@ -560,12 +591,20 @@ func (m *topModel) toggleSide() {
 	}
 }
 
-// headless reports whether id has a driver log to tail (capability usage).
-func (m *topModel) headless(id string) bool {
+// tailable reports whether id has a log to tail: a driver log (capability usage), or a
+// transcript piggery has a reader for.
+func (m *topModel) tailable(id string) bool {
+	for _, s := range m.ps.Solos {
+		if s.ID == id {
+			_, ok := sessionReader(s.Transcript)
+			return ok
+		}
+	}
 	for _, t := range teamsOf(m.ps) {
 		for _, mem := range t.Members {
 			if mem.ID == id {
-				return logged(mem)
+				_, ok := sessionReader(mem.Transcript)
+				return logged(mem) || ok
 			}
 		}
 	}

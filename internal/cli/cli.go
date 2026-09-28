@@ -204,32 +204,6 @@ func (e *env) teamUp(args []string) error {
 		})
 }
 
-func (e *env) tool(args []string) error {
-	fs := e.flags("tool")
-	pos, err := parse(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(pos) < 1 {
-		return fmt.Errorf("%w: tool <name> [key=value]...", errUsage)
-	}
-	a := core.ToolArgs{Name: pos[0], Args: map[string]any{}}
-	for _, kv := range pos[1:] {
-		k, v, ok := strings.Cut(kv, "=")
-		if !ok || k == "" {
-			return fmt.Errorf("%w: tool argument %q is not key=value", errUsage, kv)
-		}
-		a.Args[k] = v
-	}
-	return do(e, proto.VerbTool, a, func(w io.Writer, r core.SendResult) {
-		held := ""
-		if r.Held {
-			held = " HELD by " + r.RuleID
-		}
-		fmt.Fprintf(w, "sent #%d (thread #%d)%s\n", r.Seq, r.ThreadSeq, held)
-	})
-}
-
 func (e *env) join(args []string) error {
 	fs := e.flags("join")
 	team := fs.String("team", "", "team id or name")
@@ -328,30 +302,26 @@ func (e *env) why(args []string) error {
 		return fmt.Errorf("%w: why <from> <to>", errUsage)
 	}
 	return do(e, proto.VerbWhy, core.WhyArgs{From: pos[0], To: pos[1], Team: *team}, func(w io.Writer, r core.WhyResult) {
-		printVerdict(w, "", r.WhyVerdict)
-		for _, t := range r.Tools { // declarative tools of <from> that send to <to>
-			fmt.Fprintf(w, "\ntool %s (kind %s):\n", t.Tool, t.Kind)
-			printVerdict(w, "  ", t.WhyVerdict)
-		}
+		printVerdict(w, r.WhyVerdict)
 	})
 }
 
 // printVerdict prints one path through the send gate: a line per check, then the verdict.
-func printVerdict(w io.Writer, indent string, v core.WhyVerdict) {
+func printVerdict(w io.Writer, v core.WhyVerdict) {
 	for _, c := range v.Checks {
 		rule := ""
 		if c.RuleID != "" {
 			rule = " [" + c.RuleID + "]"
 		}
-		fmt.Fprintf(w, "%s%-10s %-5s %s%s\n", indent, c.Check, c.Result, c.Detail, rule)
+		fmt.Fprintf(w, "%-10s %-5s %s%s\n", c.Check, c.Result, c.Detail, rule)
 	}
 	switch v.Verdict {
 	case "deny":
-		fmt.Fprintf(w, "%sverdict: deny rule_id=%s layer=%s\n", indent, v.RuleID, v.Layer)
+		fmt.Fprintf(w, "verdict: deny rule_id=%s layer=%s\n", v.RuleID, v.Layer)
 	case "hold":
-		fmt.Fprintf(w, "%sverdict: hold rule_id=%s\n", indent, v.RuleID)
+		fmt.Fprintf(w, "verdict: hold rule_id=%s\n", v.RuleID)
 	default:
-		fmt.Fprintf(w, "%sverdict: %s\n", indent, v.Verdict)
+		fmt.Fprintf(w, "verdict: %s\n", v.Verdict)
 	}
 }
 

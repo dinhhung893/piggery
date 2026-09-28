@@ -29,7 +29,7 @@ func TestOpenMigratesV1File(t *testing.T) {
 	}
 	defer db.Close()
 	var version, team string
-	if err := db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&version); err != nil || version != "19" {
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&version); err != nil || version != "20" {
 		t.Fatalf("version = %q, %v", version, err)
 	}
 	if err := db.QueryRow(`SELECT name FROM teams WHERE id='T1'`).Scan(&team); err != nil || team != "p2p" {

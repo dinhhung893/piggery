@@ -78,6 +78,9 @@ type MemberState struct {
 	SpawnedBy    string   `json:"spawned_by,omitempty"` // participant id; "" joined on its own
 	// ProtocolVersion is what its adapter sent at its latest identify; nil = none yet.
 	ProtocolVersion *int `json:"protocol_version,omitempty"`
+	// Transcript is its session's own file as its adapter reported it (the CLI reads ctx, turns
+	// and tail from it); nil for a headless worker (its driver log) or none reported.
+	Transcript *Transcript `json:"transcript,omitempty"`
 }
 
 // SoloState is a live solo session.
@@ -94,6 +97,8 @@ type SoloState struct {
 	LastActivity int64  `json:"last_activity"`
 	// ProtocolVersion is what its adapter sent at its latest identify; nil = none yet.
 	ProtocolVersion *int `json:"protocol_version,omitempty"`
+	// Transcript is as for a member.
+	Transcript *Transcript `json:"transcript,omitempty"`
 }
 
 // pendingMail counts, per recipient, mail not yet acked: [unacked (deliverable), held].
@@ -182,7 +187,8 @@ func (e *Engine) State(ctx context.Context, a StateArgs) (State, error) {
 			c.ClosedBy = by.String
 		}
 
-		solos, err := t.QueryContext(t.ctx, `SELECT `+participantCols+`, cwd, created_at, COALESCE(session_model, model, ''), protocol_version FROM participants
+		solos, err := t.QueryContext(t.ctx, `SELECT `+participantCols+`, cwd, created_at, COALESCE(session_model, model, ''), protocol_version,
+			transcript, transcript_format FROM participants
 			WHERE team_id IS NULL AND state<>'gone' ORDER BY created_at, rowid`)
 		if err != nil {
 			return internal(err)
@@ -191,14 +197,15 @@ func (e *Engine) State(ctx context.Context, a StateArgs) (State, error) {
 			var cwd, model string
 			var created int64
 			var proto sql.NullInt64
-			q, err := scanParticipant(solos, &cwd, &created, &model, &proto)
+			var tpath, tformat sql.NullString
+			q, err := scanParticipant(solos, &cwd, &created, &model, &proto, &tpath, &tformat)
 			if err != nil {
 				solos.Close()
 				return internal(err)
 			}
 			out.Solos = append(out.Solos, SoloState{ID: q.id, Name: q.name, Cwd: cwd, State: q.state,
 				StateSince: q.stateSince, Unacked: pending[q.id][0], CreatedAt: created, Harness: q.harness, Model: model,
-				LastActivity: q.lastActivity, ProtocolVersion: intOrNil(proto)})
+				LastActivity: q.lastActivity, ProtocolVersion: intOrNil(proto), Transcript: transcriptOrNil(tpath, tformat)})
 		}
 		solos.Close()
 		if err := solos.Err(); err != nil {
@@ -257,7 +264,7 @@ func (t *txn) teamMembers(ts *TeamState, pending map[string][2]int) error {
 	ts.Members = []MemberState{}
 	rows, err := t.QueryContext(t.ctx, `SELECT `+participantCols+`, COALESCE(mode,''), last_turn_end, left_at,
 		COALESCE(session_model, model, ''), COALESCE(session_thinking, thinking, ''), COALESCE(capabilities, 'null'),
-		created_at, COALESCE(spawned_by, ''), cwd, protocol_version
+		created_at, COALESCE(spawned_by, ''), cwd, protocol_version, transcript, transcript_format
 		FROM participants WHERE team_id=? ORDER BY created_at, rowid`, ts.ID)
 	if err != nil {
 		return internal(err)
@@ -267,7 +274,9 @@ func (t *txn) teamMembers(ts *TeamState, pending map[string][2]int) error {
 		var mode, model, thinking, caps, spawnedBy, cwd string
 		var turn, left, proto sql.NullInt64
 		var created int64
-		q, err := scanParticipant(rows, &mode, &turn, &left, &model, &thinking, &caps, &created, &spawnedBy, &cwd, &proto)
+		var tpath, tformat sql.NullString
+		q, err := scanParticipant(rows, &mode, &turn, &left, &model, &thinking, &caps, &created, &spawnedBy, &cwd, &proto,
+			&tpath, &tformat)
 		if err != nil {
 			return internal(err)
 		}
@@ -281,13 +290,20 @@ func (t *txn) teamMembers(ts *TeamState, pending map[string][2]int) error {
 			Headless: mode == modeHeadless, Gate: q.id == gate.id, StateSince: q.stateSince,
 			LastTurnEnd: turn.Int64, Unacked: n[0], Model: model, Thinking: thinking, RunID: q.run, ReportsTo: q.reportsTo,
 			CreatedAt: created, SpawnedBy: spawnedBy, Harness: q.harness, LastActivity: q.lastActivity, Cwd: cwd,
-			ProtocolVersion: intOrNil(proto)})
+			ProtocolVersion: intOrNil(proto), Transcript: transcriptOrNil(tpath, tformat)})
 		json.Unmarshal([]byte(caps), &ts.Members[len(ts.Members)-1].Capabilities)
 	}
 	if err := rows.Err(); err != nil {
 		return internal(err)
 	}
 	return nil
+}
+
+func transcriptOrNil(path, format sql.NullString) *Transcript {
+	if !path.Valid {
+		return nil
+	}
+	return &Transcript{Path: path.String, Format: format.String}
 }
 
 func intOrNil(n sql.NullInt64) *int {
@@ -306,10 +322,12 @@ type WorkerLogArgs struct {
 // WorkerLog names the latest run the daemon started for a worker; its driver log is the tail.
 type WorkerLog struct {
 	ParticipantID string `json:"participant_id"`
-	RunID         string `json:"run_id"`
+	RunID         string `json:"run_id"` // a worker's latest run ("" for a session)
+	// Transcript is a session's own file (no process of piggery's), as its adapter reported it.
+	Transcript *Transcript `json:"transcript,omitempty"`
 }
 
-// WorkerLog resolves a worker to its latest run. Read-only.
+// WorkerLog resolves a worker to its latest run, or a session to its transcript. Read-only.
 func (e *Engine) WorkerLog(ctx context.Context, a WorkerLogArgs) (WorkerLog, error) {
 	var out WorkerLog
 	err := e.readOnly(ctx, func(t *txn) error {
@@ -320,10 +338,18 @@ func (e *Engine) WorkerLog(ctx context.Context, a WorkerLogArgs) (WorkerLog, err
 		out.ParticipantID = p.id
 		err = t.QueryRowContext(t.ctx, `SELECT run_id FROM processes WHERE participant_id=?
 			ORDER BY started_at DESC LIMIT 1`, p.id).Scan(&out.RunID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return errf(CodeNotFound, "%s is not a worker (no process started for it)", a.Worker)
+		if !errors.Is(err, sql.ErrNoRows) {
+			return internal(err)
 		}
-		return internal(err)
+		var path, format sql.NullString
+		if err := t.QueryRowContext(t.ctx, `SELECT transcript, transcript_format FROM participants WHERE id=?`,
+			p.id).Scan(&path, &format); err != nil {
+			return internal(err)
+		}
+		if out.Transcript = transcriptOrNil(path, format); out.Transcript == nil {
+			return errf(CodeNotFound, "%s has no log: not a worker, and its harness reported no transcript", a.Worker)
+		}
+		return nil
 	})
 	return out, err
 }

@@ -34,7 +34,6 @@ var manifestKeys = []yamlfill.Key{
 		{Name: "allow", Default: "false"},
 		{Name: "cc", Default: "[]"},
 	}},
-	{Name: "tools", Default: "{}"},
 	{Name: "timers", Default: "[]"},
 	{Name: "limits", Fields: []yamlfill.Key{
 		{Name: "depth", Default: "none"},

@@ -14,11 +14,10 @@ import (
 // original id and writes nothing. A message over a declared mail limit is stored but held
 // (limits.go); the recipient is not woken for it. The caller's role must have the send tool.
 func (e *Engine) Send(ctx context.Context, c Caller, a SendArgs) (SendResult, error) {
-	return e.send(ctx, c, a, "send")
+	return e.send(ctx, c, a)
 }
 
-// send is Send under the grant of tool: "send", or the declarative tool that produced a. messageRef
-// turns "#N" (a message's global seq: what models and humans see) into the message id; anything
+// messageRef turns "#N" (a message's global seq: what models and humans see) into the message id; anything
 // else is returned as is. An unknown #N is not_found naming it.
 func (t *txn) messageRef(ref string) (string, error) {
 	n, ok := strings.CutPrefix(ref, "#")
@@ -40,7 +39,7 @@ func (t *txn) messageRef(ref string) (string, error) {
 	return id, nil
 }
 
-func (e *Engine) send(ctx context.Context, c Caller, a SendArgs, tool string) (SendResult, error) {
+func (e *Engine) send(ctx context.Context, c Caller, a SendArgs) (SendResult, error) {
 	var res SendResult
 	var recipient string // participant to notify after commit
 	var ccTo []string    // cc copy recipients to notify after commit
@@ -82,7 +81,7 @@ func (e *Engine) send(ctx context.Context, c Caller, a SendArgs, tool string) (S
 			return err
 		}
 		res.ID = newID(t.now)
-		g, err := t.sendGate(p, m, a, tool, res.ID, nil)
+		g, err := t.sendGate(p, m, a, res.ID, nil)
 		if err != nil {
 			return err
 		}
@@ -153,16 +152,16 @@ func (tr *gateTrace) add(check, result, rule, detail string) {
 	}
 }
 
-// sendGate is the gate of a send by p (token/run already checked): the role's grant of tool,
+// sendGate is the gate of a send by p (token/run already checked): the role's grant of send,
 // target and visibility, routing, reply_to, mail limits and routing cc. msgID is the new
 // message's id (the thread of a new conversation). It writes nothing except through the
 // returned denial. Send and Why both call it, so `why` reports the decision Send would make.
-func (t *txn) sendGate(p participant, m manifest, a SendArgs, tool, msgID string, tr *gateTrace) (gatePlan, error) {
+func (t *txn) sendGate(p participant, m manifest, a SendArgs, msgID string, tr *gateTrace) (gatePlan, error) {
 	g := gatePlan{thread: msgID}
-	if err := m.granted(p, "send", tool); err != nil {
+	if err := m.granted(p, "send", "send"); err != nil {
 		return g, err
 	}
-	tr.add("permission", "pass", "tools", "role "+p.role+" has tool "+tool)
+	tr.add("permission", "pass", "tools", "role "+p.role+" has tool send")
 	var toRole string
 	switch a.To {
 	case AddrBoard:

@@ -190,7 +190,7 @@ func (s *mcpServer) identify(c *daemonConn) error {
 		fmt.Fprintln(os.Stderr, "piggery mcp: "+note)
 	}
 	s.mu.Lock()
-	changed := s.ident == nil || !slices.Equal(s.ident.Tools, r.Tools) || !sameSpecs(s.ident.ToolSpecs, r.ToolSpecs)
+	changed := s.ident == nil || !slices.Equal(s.ident.Tools, r.Tools)
 	notify := changed && s.listed
 	s.ident = &r
 	s.mu.Unlock()
@@ -199,10 +199,6 @@ func (s *mcpServer) identify(c *daemonConn) error {
 		s.write(map[string]any{"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
 	}
 	return nil
-}
-
-func sameSpecs(a, b []core.ToolSpec) bool {
-	return slices.EqualFunc(a, b, func(x, y core.ToolSpec) bool { return x.Name == y.Name })
 }
 
 func (s *mcpServer) onPush(p proto.Push) {
@@ -445,16 +441,6 @@ func (s *mcpServer) toolList() []any {
 			tools = append(tools, baseTool(t))
 		}
 	}
-	for _, sp := range id.ToolSpecs {
-		props, req := map[string]any{}, []string{}
-		for f := range sp.Params {
-			props[f] = map[string]any{"type": "string"}
-			req = append(req, f)
-		}
-		slices.Sort(req)
-		tools = append(tools, map[string]any{"name": sp.Name, "description": sp.Description,
-			"inputSchema": map[string]any{"type": "object", "properties": props, "required": req}})
-	}
 	return tools
 }
 
@@ -550,15 +536,7 @@ func (s *mcpServer) callTool(name string, raw json.RawMessage) (string, error) {
 		}
 		return agentText(a, r), nil
 	}
-	var args map[string]any
-	if err := json.Unmarshal(raw, &args); err != nil {
-		return "", err
-	}
-	var r core.SendResult
-	if err := c.call(proto.VerbTool, core.ToolArgs{Name: name, Args: args}, &r); err != nil {
-		return "", err
-	}
-	return core.SentText(r), nil
+	return "", fmt.Errorf("your role has no tool %q", name)
 }
 
 // agentText is the model-facing result of an agent action (names and #N only).

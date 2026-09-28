@@ -52,23 +52,6 @@ export function sentText(r) {
 }
 
 /**
- * Maps a declarative tool spec from identify ({name, description, params: {field: "string"}})
- * to a pi tool: every field is a required string, and calling it is the daemon verb
- * `tool {name, args}` (the daemon checks the grant and the args, then sends through the gate).
- */
-export function declarativeTool(spec, call) {
-	return {
-		name: spec.name,
-		label: `piggery ${spec.name}`,
-		description: spec.description,
-		fields: Object.keys(spec.params ?? {}).sort(),
-		async execute(args) {
-			return sentText(await call("tool", { name: spec.name, args }));
-		},
-	};
-}
-
-/**
  * Renders `who` for the model: the caller's team in full, then one line per other
  * team and per solo session. Teams and solos talk gate to gate; a team name addresses its gate.
  */

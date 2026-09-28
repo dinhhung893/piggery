@@ -301,14 +301,13 @@ type EndedTurn struct {
 }
 
 type IdentifyResult struct {
-	ParticipantID string     `json:"participant_id"`
-	RunID         string     `json:"run_id"`
-	Name          string     `json:"name"`
-	TeamID        string     `json:"team_id"`
-	Role          string     `json:"role"`
-	Tools         []string   `json:"tools"`
-	RoleCard      string     `json:"role_card"`  // rendered by core; never contains tokens
-	ToolSpecs     []ToolSpec `json:"tool_specs"` // declarative tools of the role, to register natively
+	ParticipantID string   `json:"participant_id"`
+	RunID         string   `json:"run_id"`
+	Name          string   `json:"name"`
+	TeamID        string   `json:"team_id"`
+	Role          string   `json:"role"`
+	Tools         []string `json:"tools"`
+	RoleCard      string   `json:"role_card"` // rendered by core; never contains tokens
 	// ProtocolVersion is the daemon's; an adapter that differs says so in its session. A daemon
 	// from before the exchange sends none: the adapter reads 0.
 	ProtocolVersion int `json:"protocol_version"`

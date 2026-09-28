@@ -18,7 +18,6 @@ roles:
 routing:
   - {from: peer, to: peer, allow: true, cc: []}
   - {from: peer, to: notify, allow: true, cc: []}
-tools: {}
 timers: []
 limits:                  # none: no limit
   depth: 2                 # how deep spawned_by chains may go

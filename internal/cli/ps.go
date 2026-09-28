@@ -95,6 +95,12 @@ func psLines(r proto.PsResult, now time.Time, stats map[string]workerStats, cols
 				val := map[string]string{"state": s.State, "harness": harnessLabel(s.Harness, false), "model": modelID(s.Model),
 					"unacked": fmt.Sprint(s.Unacked), "age": since(s.CreatedAt, now), "since": since(s.StateSince, now),
 					"cwd": relCwd(g.dir, s.Cwd)}
+				if ws, ok := stats[s.ID]; ok {
+					if ws.hasCtx {
+						val["ctx"] = tokens(ws.ctx)
+					}
+					val["turns"] = fmt.Sprint(ws.turns)
+				}
 				out = append(out, psLine{kind: "solo", text: strings.TrimRight(fmt.Sprintf("    %-22s%s %s", "solo "+s.Name, fields(val),
 					protocolTag(s.ProtocolVersion, r.ProtocolVersion)), " ")})
 				continue
@@ -180,11 +186,14 @@ type psUnit struct {
 	Kind    string     `json:"kind"`          // team, closed (a team closed recently: see closed[]), solo
 	ID      string     `json:"id"`            // the team's id, or the solo's participant id
 	Cwd     string     `json:"cwd,omitempty"` // solo: as ps shows it ("" the directory, ./sub, ~/…)
+	Ctx     *int       `json:"ctx,omitempty"` // solo: as a member's, from its transcript
+	Turns   *int       `json:"turns,omitempty"`
 	Members []psMember `json:"members,omitempty"`
 }
 
 // psMember is a team member in its reports_to tree, in display order. Ctx (context now) and
-// Turns (over every run) are top's, for a worker top shows them for; ctx nil until known.
+// Turns (a worker's over every run, a session's in its transcript) are top's, for a member top
+// shows them for; ctx nil until known.
 type psMember struct {
 	ID     string `json:"id"`
 	Depth  int    `json:"depth"`
@@ -208,7 +217,14 @@ func psProjects(r proto.PsResult, stats map[string]workerStats) []psProject {
 		pr := psProject{Label: short[gi], Path: g.dir, Units: []psUnit{}}
 		for _, u := range g.units {
 			if s := u.solo; s != nil {
-				pr.Units = append(pr.Units, psUnit{Kind: "solo", ID: s.ID, Cwd: relCwd(g.dir, s.Cwd)})
+				su := psUnit{Kind: "solo", ID: s.ID, Cwd: relCwd(g.dir, s.Cwd)}
+				if ws, ok := stats[s.ID]; ok {
+					su.Turns = &ws.turns
+					if ws.hasCtx {
+						su.Ctx = &ws.ctx
+					}
+				}
+				pr.Units = append(pr.Units, su)
 				continue
 			}
 			tu := psUnit{Kind: "team", ID: u.team.ID, Members: []psMember{}}
@@ -244,7 +260,8 @@ func (e *env) psJSON() error {
 	if err != nil {
 		return err
 	}
-	top := &topModel{dir: e.dir, ps: r, logs: readLogs(e.dir, r, nil)}
+	top := &topModel{dir: e.dir, ps: r, logs: readLogs(e.dir, r, loadLogCache(e.dir))}
+	saveLogCache(e.dir, top.logs)
 	out, err := withProjects(raw, r, top.stats())
 	if err != nil {
 		return err

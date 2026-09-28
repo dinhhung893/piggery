@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Turns } from "./adapter.mjs";
-import { afterRetire, declarativeTool, render, renderWho, sentText } from "./render.mjs";
+import { afterRetire, render, renderWho, sentText } from "./render.mjs";
 import { Client } from "./client.mjs";
 
 // The built-in tools, defined once for every adapter (tools.json, next to this file); {tool:X}
@@ -101,29 +101,9 @@ export default function piggery(pi: ExtensionAPI) {
 	const turns = (proc.turns ??= new Turns(io));
 	turns.io = io;
 
-	// Declarative tools of the role (identify tool_specs). pi keeps a registered tool for the
-	// process; setTools activates only the ones the current role grants.
-	const specTools = new Set<string>();
-	const registerSpecs = (specs: any[]) => {
-		for (const spec of specs) {
-			if (specTools.has(spec.name)) continue;
-			specTools.add(spec.name);
-			const t = declarativeTool(spec, (verb: string, a: unknown) => client!.call(verb, a));
-			pi.registerTool({
-				name: PREFIX + t.name,
-				label: t.label,
-				description: t.description,
-				parameters: Type.Object(Object.fromEntries(t.fields.map((f: string) => [f, Type.String()]))),
-				async execute(_id, p) {
-					return text(await t.execute(p));
-				},
-			});
-		}
-	};
-
 	const setTools = (allowed: string[]) => {
 		const active = new Set(pi.getActiveTools());
-		for (const t of [...TOOLS, ...specTools]) {
+		for (const t of TOOLS) {
 			if (allowed.includes(t)) active.add(PREFIX + t);
 			else active.delete(PREFIX + t);
 		}
@@ -143,11 +123,10 @@ export default function piggery(pi: ExtensionAPI) {
 		capabilities: ["abort", "wake", "steer", "system_prompt"],
 	});
 
-	// Tools, role card and declarative tools of the current identity (solo or a role).
+	// Tools and role card of the current identity (solo or a role).
 	let protocolWarned = false;
 	const apply = (res: any) => {
 		roleCard = res.role_card ?? "";
-		registerSpecs(res.tool_specs ?? []);
 		setTools(res.tools ?? []);
 		inTeam = !!res.team_id;
 		// An old daemon sends no version (0): a field this extension added is dropped until it restarts.
@@ -171,7 +150,11 @@ export default function piggery(pi: ExtensionAPI) {
 			// still-open team (resume), else a new solo participant.
 			let res: any;
 			try {
-				res = await cl.early("join.auto", { cwd: ctx?.cwd, ...h });
+				// The session's own file, for top's ctx, turns and tail (none when pi does not save
+				// the session): read by the CLI, never by the daemon.
+				const file = ctx?.sessionManager.getSessionFile?.();
+				const transcript = file ? { path: file, format: "pi" } : undefined;
+				res = await cl.early("join.auto", { cwd: ctx?.cwd, ...h, transcript });
 			} catch (err: any) {
 				if (err?.code) {
 					// Live elsewhere (invalid) or a headless worker's session (not_found): inert for

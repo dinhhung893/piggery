@@ -2,8 +2,9 @@
 # Roles are responsibility, authority and escalation, not personas. The Human talks to the
 # Supervisor (the session that founds the team); the Supervisor opens lanes, one Lead each, in the
 # team root or a git worktree per lane; the Lead splits its lane into scopes for Peers. The Supervisor may tell a Peer
-# something directly, and routing copies the Lead. Peers have no free send: `done` and `ask` go to
-# the Lead; the Lead's go to the Supervisor. The Lead keeps the lane's plan on the board.
+# something directly, and routing copies the Lead. Every role talks with `send`; routing is the
+# fence: a Peer reaches only the Lead, a Lead the Supervisor and its Peers. Handbacks, questions and
+# arguments are mail, with a kind where it helps. The Lead keeps the lane's plan on the board.
 model: slp
 summary: Lanes of work (code, research, writing, operations…) where the Human sets direction through a Supervisor, a Lead owns the plan and integration, and Peers own separate scopes and may question the premise.
 auto_join_role: supervisor   # the founder's role when a session founds a team from this template
@@ -23,7 +24,7 @@ roles:
   lead:
     description: Holds the lane's plan on the board, splits it into scopes with one owner each, judges the evidence, and integrates.
     instructions_file: prompts/slp/lead.md
-    tools: [send, inbox, who, agent, done, ask]
+    tools: [send, inbox, who, agent]
     can_spawn: [peer]
     can_pin: true
     can_set_cwd: true
@@ -35,7 +36,7 @@ roles:
   peer:
     description: Owns one scope and the judgement inside it; may question the premise with evidence; hands back what is true.
     instructions_file: prompts/slp/peer.md
-    tools: [inbox, who, done, ask]           # no free send
+    tools: [send, inbox, who]
     can_spawn: []
     can_pin: false
     can_set_cwd: false
@@ -51,15 +52,6 @@ routing:
   - {from: peer, to: lead, allow: true, cc: []}
   - {from: supervisor, to: peer, allow: true, cc: [lead]}   # the Lead sees what the Supervisor tells a Peer
   - {from: supervisor, to: notify, allow: true, cc: []}
-tools:
-  done:
-    description: Hand your work back to whoever spawned you.
-    params: {summary: string, checks: string, left_undone: string}
-    send: {kind: handback, to: spawned_by}
-  ask:
-    description: Ask whoever spawned you something outside your authority, with your best guess; keep working if you can.
-    params: {question: string, best_guess: string}
-    send: {kind: ask, to: spawned_by}
 timers:
   - {on: peer, notify: reports_to, silent_for: 20m}
   - {on: lead, notify: reports_to, silent_for: 30m}

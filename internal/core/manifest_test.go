@@ -25,7 +25,8 @@ func yamlKeys(t reflect.Type) []string {
 }
 
 // Every built-in template writes every field a manifest takes, defaults too: the keys come from the
-// manifest's own types and knownLimits, so a field added without its template line fails here.
+// manifest's own types and knownLimits, so a field added without its template line fails here. And
+// every role of a built-in has send.
 func TestBuiltinTemplatesWriteEveryField(t *testing.T) {
 	files, _ := filepath.Glob("../../manifests/*.yaml")
 	if len(files) == 0 {
@@ -72,6 +73,10 @@ func TestBuiltinTemplatesWriteEveryField(t *testing.T) {
 			}
 			sp, _ := rm["spawn"].(map[string]any)
 			missing(f, "role "+name+" spawn", sp, spawn)
+			// Every role of a built-in talks with send; routing, not the tool list, fences it.
+			if tools, _ := rm["tools"].([]any); !slices.Contains(tools, any("send")) {
+				t.Errorf("%s: role %s has no send", filepath.Base(f), name)
+			}
 		}
 	}
 }

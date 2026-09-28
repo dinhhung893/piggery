@@ -70,8 +70,11 @@ var migrate18 string
 //go:embed migrate_19.sql
 var migrate19 string
 
+//go:embed migrate_20.sql
+var migrate20 string
+
 // migrations[i] takes the DB from version i to i+1. schema.sql is v1; never edit an applied step.
-var migrations = []string{schema, migrate2, migrate3, migrate4, migrate5, migrate6, migrate7, migrate8, migrate9, migrate10, migrate11, migrate12, migrate13, migrate14, migrate15, migrate16, migrate17, migrate18, migrate19}
+var migrations = []string{schema, migrate2, migrate3, migrate4, migrate5, migrate6, migrate7, migrate8, migrate9, migrate10, migrate11, migrate12, migrate13, migrate14, migrate15, migrate16, migrate17, migrate18, migrate19, migrate20}
 
 // Open opens (creating if needed) the DB file at path with mode 0600, WAL, and the schema applied.
 func Open(path string) (*sql.DB, error) {

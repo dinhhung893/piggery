@@ -1,18 +1,7 @@
 // The pi adapter's model-facing text and tool helpers.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { afterRetire, declarativeTool, render, renderWho } from "./render.mjs";
-
-test("a declarative tool spec maps to string fields and calls the tool verb", async () => {
-	const calls = [];
-	const t = declarativeTool(
-		{ name: "done", description: "Hand back.", params: { summary: "string", notes: "string" } },
-		async (verb, a) => (calls.push([verb, a]), { id: "m1", seq: 7, thread_id: "m1", thread_seq: 7 }),
-	);
-	assert.deepEqual([t.name, t.description, t.fields], ["done", "Hand back.", ["notes", "summary"]]);
-	assert.match(await t.execute({ summary: "ok", notes: "-" }), /^sent #7 \(thread #7\)$/);
-	assert.deepEqual(calls, [["tool", { name: "done", args: { summary: "ok", notes: "-" } }]]);
-});
+import { afterRetire, render, renderWho } from "./render.mjs";
 
 test("a mail header shows #N and names, the local send time, and an age only when late", () => {
 	const now = new Date(2026, 8, 27, 14, 30, 0).getTime();

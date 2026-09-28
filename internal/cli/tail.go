@@ -20,8 +20,9 @@ import (
 	"github.com/sting8k/piggery/internal/proto"
 )
 
-// tail prints a worker's rpc log (the driver's file for its latest run) readably; -f follows it,
-// onto the next run when the worker is resumed, until Ctrl-C. --json prints the raw records.
+// tail prints a participant's log readably: a worker's rpc log (the driver's file for its latest
+// run), or a session's own transcript; -f follows it, onto the next run when the worker is resumed
+// (or the session's next transcript), until Ctrl-C. --json prints the raw records.
 func (e *env) tail(args []string) error {
 	fs := e.flags("tail")
 	var a core.WorkerLogArgs
@@ -33,7 +34,7 @@ func (e *env) tail(args []string) error {
 		return err
 	}
 	if len(pos) != 1 {
-		return fmt.Errorf("%w: tail <worker> [-n N] [-f] [--team T]", errUsage)
+		return fmt.Errorf("%w: tail <worker|session> [-n N] [-f] [--team T]", errUsage)
 	}
 	a.Worker = pos[0]
 	c, err := e.connect()
@@ -45,29 +46,35 @@ func (e *env) tail(args []string) error {
 	if _, err := c.CallInto(proto.VerbTail, a, &r); err != nil {
 		return err
 	}
-	show := func(rec []byte) {
-		if e.json {
-			fmt.Fprintln(e.stdout, string(rec))
-		} else if l, ok := tailLine(rec); ok {
-			fmt.Fprintln(e.stdout, l)
-		}
-	}
-	recs, off, err := readRecords(r.Path, 0)
+	path, newReader, err := tailSource(r)
 	if err != nil {
 		return err
 	}
-	if !e.json {
-		recs = readable(recs)
+	shown, off, reader, err := lastLines(path, newReader, *n, e.json)
+	if err != nil {
+		return err
 	}
-	if len(recs) > *n {
-		recs = recs[len(recs)-*n:]
-	}
-	for _, rec := range recs {
-		show(rec)
+	for _, l := range shown {
+		fmt.Fprintln(e.stdout, l)
 	}
 	if !*follow {
 		return nil
 	}
+	// lines is recs as printed: raw with --json, else each readable one's line (one read per
+	// record: a reader may keep state).
+	lines := func(recs [][]byte) []string {
+		var out []string
+		for _, rec := range recs {
+			l := reader.read(rec).line
+			if e.json {
+				out = append(out, string(rec))
+			} else if l != "" {
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	var recs [][]byte
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	tick := time.NewTicker(300 * time.Millisecond)
@@ -78,21 +85,29 @@ func (e *env) tail(args []string) error {
 			return nil
 		case <-tick.C:
 		}
-		recs, off, err = readRecords(r.Path, off)
+		recs, off, err = readRecords(path, off)
 		if err != nil {
 			return err
 		}
-		for _, rec := range recs {
-			show(rec)
+		for _, l := range lines(recs) {
+			fmt.Fprintln(e.stdout, l)
 		}
-		if i%5 == 0 { // a resumed worker writes a new run's log
+		if i%5 == 0 { // a resumed worker writes a new run's log; a session may start a new transcript
 			var next proto.TailResult
 			if _, err := c.CallInto(proto.VerbTail, a, &next); err != nil {
 				return err
 			}
-			if next.RunID != r.RunID {
-				r, off = next, 0
-				fmt.Fprintf(e.stdout, "-- run %s\n", r.RunID)
+			p, nr, err := tailSource(next)
+			if err != nil {
+				return err
+			}
+			if p != path {
+				path, off, reader = p, 0, nr()
+				if next.RunID != "" {
+					fmt.Fprintf(e.stdout, "-- run %s\n", next.RunID)
+				} else {
+					fmt.Fprintf(e.stdout, "-- %s\n", p)
+				}
 			}
 		}
 	}
@@ -124,17 +139,6 @@ func readRecords(path string, off int64) ([][]byte, int64, error) {
 			out = append(out, line)
 		}
 	}
-}
-
-// readable keeps the records tailLine shows.
-func readable(recs [][]byte) [][]byte {
-	var out [][]byte
-	for _, r := range recs {
-		if _, ok := tailLine(r); ok {
-			out = append(out, r)
-		}
-	}
-	return out
 }
 
 // tailLine is one pi rpc record (docs/rpc.md of pi) as a line, or false for records that only

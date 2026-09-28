@@ -28,7 +28,7 @@ func (e *Engine) soloManifest() manifest {
 func soloCard(p participant) string {
 	return fmt.Sprintf("You are %s, a solo piggery session: you are in no team. ", p.name) +
 		"Mail from others arrives as a user message with a header naming the sender and the message's #N." +
-		toolTips(p.toolPrefix, soloTools, manifest{}) +
+		toolTips(p.toolPrefix, soloTools) +
 		" Other teams are reached only through their gate: send to a team's name to reach it." +
 		" When asked to set up a team, use " + p.toolPrefix + "agent action=found (template default p2p);" +
 		" the team is rooted at your directory and you become its gate. When asked to reopen a closed team rooted" +

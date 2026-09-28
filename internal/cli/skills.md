@@ -20,7 +20,6 @@ piggery send <to> "text" [--reply-to #N] [--expects-reply] [--kind K]
 piggery inbox                                 # new mail (read only)
 piggery inbox --view board                    # the team board
 piggery completion --batch N                  # ack a batch you pulled with inbox --batch N
-piggery tool <name> key=value ...             # a declarative tool of your role (e.g. done summary=...)
 ```
 
 - `to`: a teammate's name; another team's name (reaches its gate; only gates write between
@@ -57,23 +56,21 @@ set `model:` to that name. You do not bring it up: the Human does, or asks a ses
 - `model` (required): the template's name, also the default team name. `summary`: one line, when
   to use it. `auto_join_role`: the founder's role (else the only role).
 - `roles.<role>` (at least one): `description` (one line); `instructions_file` or `instructions`;
-  `tools` (built-in `send`, `inbox`, `who`, `agent`, plus declared ones; without `send` a role
-  writes only through its declared tools); `can_spawn: [role]`; `can_pin: true` (board, needs
+  `tools` (`send`, `inbox`, `who`, `agent`; there are no other tools); `can_spawn: [role]`; `can_pin: true` (board, needs
   `send`); `can_set_cwd: true` (may spawn a worker in another directory); `spawn: {model:
   provider/id, thinking: level, harness: pi|claude|codex}` (omit to inherit the founding session's).
 - `routing`: `{from: role, to: role, allow: true|false, cc: [role]}`; the first rule matching
   (sender's role, recipient's role) decides, none means denied; `to: notify` lets a role notify
   the Human; `cc` copies other members of those roles. Mail between teams ignores routing.
-- `tools.<name>`: `{description, params: {field: string}, send: {kind: K, to: spawned_by|reports_to|<role>}}`,
-  one message of a fixed kind; params are required strings; it goes through routing.
 - `limits`: `depth` and `concurrency` (required once a role can spawn),
   `messages_per_participant_per_minute`, `messages_per_thread`, `max_hops`, `max_respawn_per_hour`.
 - `timers`: `{on: role, silent_for: 20m, notify: reports_to|notify|<role>}`: one notice when that
   role works with no turn end for that long.
 
-**Prompts.** Name tools only as `{tool:send}`, `{tool:agent}`, `{tool:done}`… (each harness names them
+**Prompts.** Name tools only as `{tool:send}`, `{tool:agent}`, `{tool:inbox}`, `{tool:who}` (each harness names them
 differently: `piggery_send` in pi, `mcp__piggery__send` in Claude and Codex); a placeholder that
-names no tool is refused. A role is a responsibility, what it may do and where it escalates, not a
+names no tool is refused. A handback, a question or a report is a `send` with a `kind` (e.g.
+`handback`, `ask`, `report`) to the right name; routing is the fence, the prompt says who sends what. A role is a responsibility, what it may do and where it escalates, not a
 persona. Stay neutral about the kind of work: a task is a result, its bounds, and its check. Spell
 out the lifecycle: give the next task to a free worker instead of spawning; end the turn after
 sending; when a worker goes silent, read its tail, then nudge or resume it; stop workers when done.
@@ -94,16 +91,11 @@ roles:
   helper:
     description: Answers one part at a time, with sources, and reports to the lead.
     instructions_file: prompts/helper.md
-    tools: [inbox, who, report]          # no free send: it answers through report
+    tools: [send, inbox, who]            # routing lets it write only to the lead
 routing:
   - {from: lead, to: helper, allow: true}
   - {from: helper, to: lead, allow: true}
   - {from: lead, to: notify, allow: true}
-tools:
-  report:
-    description: Send your answer to the lead who spawned you.
-    params: {answer: string}
-    send: {kind: report, to: spawned_by}
 limits: {depth: 2, concurrency: 3}
 timers:
   - {on: helper, silent_for: 30m, notify: reports_to}
@@ -123,6 +115,6 @@ back what is missing. When every part is answered, stop the helpers and give the
 
 ```
 You are a helper. The lead gives you one part at a time by mail. Answer it with sources, say
-what you could not check, and send it with {tool:report}. Then end your turn and wait for the
+what you could not check, and send it to the lead with {tool:send} kind `report`. Then end your turn and wait for the
 next part. Do not start or message other agents.
 ```

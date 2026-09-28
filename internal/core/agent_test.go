@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"slices"
@@ -358,7 +359,29 @@ func TestJoinAuto(t *testing.T) {
 	if _, err := e.TeamUp(ctx, core.TeamUpArgs{Name: "here", Manifest: string(man), Cwd: dir}); err != nil {
 		t.Fatal(err)
 	}
-	args := core.JoinAutoArgs{Cwd: dir, Harness: "pi", Mode: "interactive", HarnessRef: "abcdef-123456"}
+	args := core.JoinAutoArgs{Cwd: dir, Harness: "pi", Mode: "interactive", HarnessRef: "abcdef-123456",
+		Transcript: &core.Transcript{Path: "/s/a.jsonl", Format: "pi"}}
+	// transcript is the session's transcript path as ps reports it ("" none).
+	transcript := func(id string) string {
+		t.Helper()
+		st, err := e.State(ctx, core.StateArgs{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range st.Solos {
+			if s.ID == id && s.Transcript != nil {
+				return s.Transcript.Path
+			}
+		}
+		for _, tm := range st.Teams {
+			for _, m := range tm.Members {
+				if m.ID == id && m.Transcript != nil {
+					return m.Transcript.Path
+				}
+			}
+		}
+		return ""
+	}
 	first, err := e.JoinAuto(ctx, args)
 	if err != nil || first.TeamID != "" {
 		t.Fatalf("new session at a team root = %+v, %v; want a solo", first, err)
@@ -377,9 +400,13 @@ func TestJoinAuto(t *testing.T) {
 		}
 	}
 	shutdown(c)
+	args.Transcript = nil // an adapter that reports none keeps the stored transcript
 	again, err := e.JoinAuto(ctx, args)
 	if err != nil || again.ID != first.ID || again.RunID == first.RunID || again.Token == first.Token || again.TeamID != "" {
 		t.Fatalf("solo resume = %+v, first %+v, %v", again, first, err)
+	}
+	if p := transcript(again.ID); p != "/s/a.jsonl" {
+		t.Fatalf("transcript after a resume that reported none = %q", p)
 	}
 	if _, err := e.Authenticate(ctx, first.ID, first.Token); err == nil {
 		t.Fatal("old token still valid after resume")
@@ -390,9 +417,13 @@ func TestJoinAuto(t *testing.T) {
 		t.Fatal(err)
 	}
 	shutdown(c)
+	args.Transcript = &core.Transcript{Path: "/s/b.jsonl", Format: "pi"} // e.g. the harness's new session file
 	member, err := e.JoinAuto(ctx, args)
 	if err != nil || member.ID != first.ID || member.TeamID != f.TeamID {
 		t.Fatalf("member resume = %+v (team %s), %v", member, f.TeamID, err)
+	}
+	if p := transcript(member.ID); p != "/s/b.jsonl" {
+		t.Fatalf("transcript after a resume that reported a new one = %q", p)
 	}
 	c, _ = e.Authenticate(ctx, member.ID, member.Token)
 	shutdown(c)
@@ -410,20 +441,32 @@ func TestJoinAuto(t *testing.T) {
 	if _, err := e.JoinAuto(ctx, args); code(err) != core.CodeNotFound {
 		t.Fatalf("join.auto with a headless worker's session: %v", err)
 	}
+
+	// A member that founds another team goes on as a new participant: its transcript goes with it.
+	s, err := e.JoinAuto(ctx, core.JoinAutoArgs{Cwd: dir, Harness: "pi", Mode: "interactive", HarnessRef: "fedcba-654321",
+		Transcript: &core.Transcript{Path: "/s/c.jsonl", Format: "pi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ = e.Authenticate(ctx, s.ID, s.Token)
+	if _, err := e.Agent(ctx, c, core.AgentArgs{Action: core.AgentFound}); err != nil { // the solo becomes a member
+		t.Fatal(err)
+	}
+	f2, err := e.Agent(ctx, c, core.AgentArgs{Action: core.AgentFound}) // the member leaves for a new team
+	if err != nil || f2.ParticipantID == s.ID {
+		t.Fatalf("found by a member = %+v, %v; want a new participant", f2, err)
+	}
+	if p := transcript(f2.ParticipantID); p != "/s/c.jsonl" {
+		t.Fatalf("transcript after found by a member = %q; want the session's, moved with it", p)
+	}
 }
 
-// A session's default name is adjective-noun derived from its harness_ref: the same ref gives the
-// same name, in any database (so a resumed or re-placed session keeps it).
+// A session's default name is one word derived from its harness_ref: the same ref gives the
+// same word. Two refs that start at the same word get two different words, not a -2 suffix.
 func TestJoinAutoWordName(t *testing.T) {
-	name := func() string {
+	join := func(e *core.Engine, ref string) string {
 		t.Helper()
-		db, err := store.OpenMemory()
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer db.Close()
-		e := core.New(db)
-		j, err := e.JoinAuto(ctx, core.JoinAutoArgs{Cwd: t.TempDir(), Harness: "pi", Mode: "rpc", HarnessRef: "019a3c7e-5b1d-7f00-8e2a-1c9d4b6a7e31"})
+		j, err := e.JoinAuto(ctx, core.JoinAutoArgs{Cwd: t.TempDir(), Harness: "pi", Mode: "rpc", HarnessRef: ref})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -432,10 +475,37 @@ func TestJoinAutoWordName(t *testing.T) {
 		if err != nil || len(who) == 0 {
 			t.Fatalf("who = %+v, %v", who, err)
 		}
-		return who[0].Name
+		for _, w := range who {
+			if w.ID == j.ID {
+				return w.Name
+			}
+		}
+		t.Fatalf("%s not in who %+v", j.ID, who)
+		return ""
 	}
-	if a, b := name(), name(); a != b || !regexp.MustCompile(`^[a-z]+-[a-z]+$`).MatchString(a) {
-		t.Fatalf("names %q, %q; want the same adjective-noun", a, b)
+	engine := func() *core.Engine {
+		t.Helper()
+		db, err := store.OpenMemory()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		return core.New(db)
+	}
+	const ref = "019a3c7e-5b1d-7f00-8e2a-1c9d4b6a7e31"
+	if a, b := join(engine(), ref), join(engine(), ref); a != b || !regexp.MustCompile(`^[a-z]+$`).MatchString(a) {
+		t.Fatalf("names %q, %q; want the same single word", a, b)
+	}
+	other := ""
+	for i := 0; other == ""; i++ {
+		if r := fmt.Sprintf("ref-%d", i); r != ref && core.NameWord(r) == core.NameWord(ref) {
+			other = r
+		}
+	}
+	e := engine()
+	a, b := join(e, ref), join(e, other)
+	if a != core.NameWord(ref) || b == a || !regexp.MustCompile(`^[a-z]+$`).MatchString(b) {
+		t.Fatalf("same start word: names %q, %q; want %q and another single word", a, b, core.NameWord(ref))
 	}
 }
 

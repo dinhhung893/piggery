@@ -202,7 +202,6 @@ func (e *env) root() *cobra.Command {
 			"", "", "", authParticipant, e.send),
 		e.cmd("inbox [--batch N] [--view V]", "", "", "", authParticipant, e.inbox),
 		e.cmd("completion --batch N", "", "", "", authParticipant, e.completion),
-		e.cmd("tool <name> [key=value]...", "", "", "", authParticipant, e.tool),
 		e.cmd("who", "", "", "", authParticipant, func(a []string) error { return simple(e, "who", a, proto.VerbWho, printWho) }),
 		e.cmd("board", "", "", "", authParticipant, func(a []string) error { return simple(e, "board", a, proto.VerbBoard, printBoard) }),
 		e.cmd("watch add|list", "", "", "", authParticipant, e.watch),

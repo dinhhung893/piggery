@@ -28,13 +28,12 @@ const (
 	VerbIdentify     = "identify"      // args core.IdentifyArgs -> core.IdentifyResult; binds the connection
 	VerbPresence     = "presence"      // args core.PresenceArgs -> {}
 	VerbHarnessEvent = "harness.event" // args core.HarnessEventArgs -> core.HarnessEventResult (adapter events)
-	VerbTool         = "tool"          // args core.ToolArgs -> core.SendResult (a declarative role tool)
 	VerbWhy          = "why"           // admin, args core.WhyArgs -> core.WhyResult (read-only)
 	VerbDoctor       = "doctor"        // admin, no args -> core.DoctorResult (read-only)
 	VerbLabels       = "labels"        // admin, args core.LabelsArgs -> map id -> name or #seq (read-only)
 	VerbTeamDown     = "team.down"     // admin, args core.TeamDownArgs -> core.TeamDownResult
 	VerbPs           = "ps"            // admin, args core.StateArgs -> PsResult (read-only)
-	VerbTail         = "tail"          // admin, args core.WorkerLogArgs -> TailResult (read-only)
+	VerbTail         = "tail"          // admin, args core.WorkerLogArgs -> TailResult (read-only): a worker's log or a session's transcript
 	VerbShutdown     = "shutdown"      // admin, no args -> {}; the daemon shuts down after answering
 	VerbAbort        = "abort"         // admin, args core.AdminTarget -> core.AbortResult
 	VerbKill         = "kill"          // admin, args core.AdminTarget -> core.AgentResult (exit)
@@ -50,7 +49,8 @@ type PsResult struct {
 	core.State
 }
 
-// TailResult is a worker's latest run and the path of its driver log (local to the daemon).
+// TailResult is a worker's latest run and the path of its driver log (local to the daemon), or a
+// session's transcript (Path "").
 type TailResult struct {
 	core.WorkerLog
 	Path string `json:"path"`

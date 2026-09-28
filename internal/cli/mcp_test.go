@@ -112,8 +112,7 @@ func TestMCP(t *testing.T) {
 		defer mu.Unlock()
 		switch verb {
 		case proto.VerbIdentify:
-			return core.IdentifyResult{ParticipantID: "P", RunID: "R", Tools: tools,
-				ToolSpecs: []core.ToolSpec{{Name: "done", Description: "hand back", Params: map[string]string{"summary": "string"}}}}
+			return core.IdentifyResult{ParticipantID: "P", RunID: "R", Tools: tools}
 		case proto.VerbSend:
 			return core.SendResult{Seq: 7, ThreadSeq: 3}
 		}
@@ -163,7 +162,7 @@ func TestMCP(t *testing.T) {
 	for _, x := range list["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, x.(map[string]any)["name"].(string))
 	}
-	if strings.Join(names, ",") != "send,who,done" {
+	if strings.Join(names, ",") != "send,who" {
 		t.Fatalf("tools = %v", names)
 	}
 	var id core.IdentifyArgs
@@ -314,8 +313,8 @@ func TestHookClaude(t *testing.T) {
 	}
 }
 
-// A session the Human opened: SessionStart places it by host (join.auto), then the event goes
-// out as that host; idle_prompt is the idle event; piggery's own tools are allowed without a
+// A session the Human opened: SessionStart places it by host (join.auto) with its transcript,
+// then the event goes out as that host; idle_prompt is the idle event; piggery's own tools are allowed without a
 // daemon call, any other tool is left to Claude.
 func TestHookClaudeSession(t *testing.T) {
 	dir, err := os.MkdirTemp("", "pghooks")
@@ -334,7 +333,7 @@ func TestHookClaudeSession(t *testing.T) {
 	e := &env{dir: dir, stdout: &out}
 
 	e.runHook("claude", "SessionEnd", strings.NewReader(`{"session_id":"s1","reason":"clear"}`), io.Discard) // not the end of the session
-	e.runHook("claude", "SessionStart", strings.NewReader(`{"session_id":"s2","source":"clear","cwd":"/w"}`), io.Discard)
+	e.runHook("claude", "SessionStart", strings.NewReader(`{"session_id":"s2","source":"clear","cwd":"/w","transcript_path":"/p/s2.jsonl"}`), io.Discard)
 	e.runHook("claude", "Notification", strings.NewReader(`{"session_id":"s2","notification_type":"idle_prompt"}`), io.Discard)
 	e.runHook("claude", "Notification", strings.NewReader(`{"session_id":"s2","notification_type":"permission_prompt"}`), io.Discard)
 	var j core.JoinAutoArgs
@@ -343,7 +342,7 @@ func TestHookClaudeSession(t *testing.T) {
 	json.Unmarshal(d.calls[1].Args, &start)
 	json.Unmarshal(d.calls[2].Args, &idle)
 	if len(d.calls) != 3 || d.calls[0].Verb != proto.VerbJoinAuto || j.Host != "claude:9:1" || j.Source != "clear" || j.HarnessRef != "s2" ||
-		j.Cwd != "/w" || d.calls[1].Auth.Host != "claude:9:1" || start.Event != core.HarnessSessionStart || start.Source != "clear" || idle.Event != core.HarnessIdle {
+		j.Cwd != "/w" || j.Transcript == nil || *j.Transcript != (core.Transcript{Path: "/p/s2.jsonl", Format: "claude"}) || d.calls[1].Auth.Host != "claude:9:1" || start.Event != core.HarnessSessionStart || start.Source != "clear" || idle.Event != core.HarnessIdle {
 		t.Fatalf("calls %d: %+v %+v %+v", len(d.calls), j, start, idle)
 	}
 	if out.Len() != 0 {
@@ -359,7 +358,8 @@ func TestHookClaudeSession(t *testing.T) {
 
 // piggery hook codex in a TUI session: SessionStart joins by the codex host with its source; the
 // turn key is turn_id; Stop with no mail still answers JSON; Interrupt ends the turn unacked; a
-// native subagent's hook (agent_id) is dropped; SessionEnd names its session id.
+// native subagent's hook (agent_id) is dropped; SessionEnd names its session id. An ephemeral
+// thread's null transcript_path sends no transcript.
 func TestHookCodexSession(t *testing.T) {
 	dir, err := os.MkdirTemp("", "pghookx")
 	if err != nil {
@@ -377,7 +377,7 @@ func TestHookCodexSession(t *testing.T) {
 	e := &env{dir: dir, stdout: &out}
 	run := func(hook, in string) { e.runHook("codex", hook, strings.NewReader(in), io.Discard) }
 
-	run("SessionStart", `{"session_id":"s1","source":"startup","cwd":"/w"}`)
+	run("SessionStart", `{"session_id":"s1","source":"startup","cwd":"/w","transcript_path":null}`)
 	run("UserPromptSubmit", `{"session_id":"s1","turn_id":"t1"}`)
 	run("PostToolUse", `{"session_id":"s1","turn_id":"t9","agent_id":"a1"}`) // a subagent's
 	run("Stop", `{"session_id":"s1","turn_id":"t1","stop_hook_active":false}`)
@@ -394,7 +394,7 @@ func TestHookCodexSession(t *testing.T) {
 		json.Unmarshal(c.Args, &a)
 		evs = append(evs, a)
 	}
-	if j.Harness != "codex" || j.Host != "codex:9:1" || j.Source != "startup" || j.HarnessRef != "s1" || len(evs) != 5 ||
+	if j.Harness != "codex" || j.Host != "codex:9:1" || j.Transcript != nil || j.Source != "startup" || j.HarnessRef != "s1" || len(evs) != 5 ||
 		evs[1].Event != core.HarnessTurnStart || evs[1].PromptID != "t1" ||
 		evs[2].Event != core.HarnessTurnEnd || evs[2].Outcome != core.HarnessOutcomeOK || evs[2].PromptID != "t1" ||
 		evs[3].Outcome != core.HarnessOutcomeIntr || evs[3].PromptID != "t2" ||

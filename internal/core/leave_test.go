@@ -32,11 +32,10 @@ func TestLeave(t *testing.T) {
 		"  lead: {tools: [send, inbox, who, agent], can_spawn: [boss, peer]}\n" +
 		"  boss: {tools: [inbox, who, agent], can_spawn: [peer]}\n" +
 		"  peer: {tools: [send, inbox, who]}\nlimits: {depth: 2, concurrency: 2}\n"
-	// Template w: a dev with send hands back to whoever took it in (done -> spawned_by).
+	// Template w: a lead and a dev it takes in.
 	const w = "model: w\nauto_join_role: lead\nroles:\n" +
 		"  lead: {tools: [send, inbox, who, agent], can_spawn: [dev]}\n" +
-		"  dev: {tools: [send, inbox, who, done]}\nlimits: {depth: 2, concurrency: 2}\n" +
-		"tools:\n  done: {description: d, params: {summary: string}, send: {kind: handback, to: spawned_by}}\n"
+		"  dev: {tools: [send, inbox, who]}\nlimits: {depth: 2, concurrency: 2}\n"
 	e := core.New(db, core.WithTemplates(func(name, _ string) (string, error) {
 		switch name {
 		case "v":
@@ -224,8 +223,7 @@ func TestLeave(t *testing.T) {
 	}
 
 	// Regression (live run): the lead leaves and the dev it took in becomes the gate. The
-	// gate reports to no one: its links to the leaver are cleared, and its done is refused with
-	// "you report to no one", never pointed at itself.
+	// gate reports to no one: its links to the leaver are cleared, never pointed at itself.
 	wroot := t.TempDir()
 	wlead := solo("wld-a", wroot)
 	agent(wlead, core.AgentArgs{Action: core.AgentFound, Template: "w"})
@@ -235,10 +233,6 @@ func TestLeave(t *testing.T) {
 	if n := count(`SELECT COUNT(*) FROM participants WHERE id=? AND reports_to IS NULL AND spawned_by IS NULL`,
 		dev.ParticipantID); n != 1 {
 		t.Fatal("the dev that became the gate still reports to the leaver")
-	}
-	_, err = e.Tool(ctx, dev, core.ToolArgs{Name: "done", Args: map[string]any{"summary": "ok"}})
-	if !errors.As(err, &ce) || ce.RuleID != "tool.no_spawned_by" {
-		t.Fatalf("done by a gate that reports to no one: %v", err)
 	}
 	if _, err := e.Send(ctx, dev, core.SendArgs{To: name(wlead), Body: "hi"}); !errors.As(err, &ce) ||
 		ce.RuleID != "team.left" || ce.Details.(map[string]any)["gate"] != name(dev) || strings.Contains(ce.Message, "send to its gate") {

@@ -44,6 +44,9 @@ func validManifest(text string) (manifest, error) {
 	if err != nil {
 		return m, err
 	}
+	if err := noDeclaredTools(text); err != nil {
+		return m, err
+	}
 	if err := validateTimers(text, m); err != nil {
 		return m, err
 	}

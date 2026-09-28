@@ -219,7 +219,6 @@ type manifest struct {
 	Roles   map[string]roleSpec `yaml:"roles"`
 	Routing []routeRule         `yaml:"routing"`
 	Limits  limitMap            `yaml:"limits"`
-	Tools   map[string]toolSpec `yaml:"tools"` // declarative tools (roles.go)
 	// AutoJoinRole is the role join.auto gives a session in a team with several roles.
 	AutoJoinRole string `yaml:"auto_join_role"`
 }
@@ -270,6 +269,20 @@ func parseManifest(text string) (manifest, error) {
 		m.Roles[name] = r
 	}
 	return m, nil
+}
+
+// noDeclaredTools refuses a manifest that still declares tools: they were removed in
+// v0.2.0, and a template must not silently lose them. It guards the ways in (team up, found,
+// templates), not parseManifest: a team brought up before keeps working. An empty `tools: {}`
+// (setup used to write it) declares nothing.
+func noDeclaredTools(text string) error {
+	var removed struct {
+		Tools map[string]any `yaml:"tools"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &removed); err == nil && len(removed.Tools) > 0 {
+		return errf(CodeInvalid, "manifest: tools: declarative tools were removed from piggery; give the role send and say in its prompt what to send to whom (e.g. a handback as a send of kind handback), then delete the tools: section")
+	}
+	return nil
 }
 
 // inherit is the written value of a spawn setting that follows the chain.

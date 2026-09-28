@@ -6,3 +6,6 @@ func SetGCAfterSnapshot(f func()) func() {
 	gcAfterSnapshot = f
 	return func() { gcAfterSnapshot = old }
 }
+
+// NameWord is the word a session named from ref starts at (names.go).
+func NameWord(ref string) string { return nameNouns[wordStart(ref)] }

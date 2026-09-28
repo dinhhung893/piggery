@@ -228,6 +228,9 @@ func (e *Engine) readTemplate(name, cwd string) (manifest, error) {
 	if err != nil {
 		return manifest{}, err
 	}
+	if err := noDeclaredTools(text); err != nil {
+		return manifest{}, err
+	}
 	return parseManifest(text)
 }
 
