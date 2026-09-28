@@ -36,12 +36,16 @@ Pick a built-in one or write your own; piggery enforces it on every send and spa
 ## Install
 
 ```sh
-# macOS on Apple silicon. Other builds: darwin-amd64, linux-amd64, linux-arm64
-curl -fsSLo piggery https://github.com/sting8k/piggery/releases/latest/download/piggery-darwin-arm64
-chmod +x piggery && mv piggery ~/.local/bin/   # any directory on your PATH
-
+curl -fsSL https://raw.githubusercontent.com/sting8k/piggery/main/install.sh | sh
 piggery setup pi       # and/or: claude, codex
 ```
+
+The script picks the build for your OS and CPU (Linux or macOS, amd64 or arm64), checks it against
+the release's `checksums.txt`, and installs it in `~/.local/bin` (`PIGGERY_INSTALL_DIR` to change it,
+`PIGGERY_VERSION=v0.2.0` for a given release). By hand: download `piggery-<os>-<arch>` (`darwin-arm64`,
+`darwin-amd64`, `linux-amd64`, `linux-arm64`) from the
+[latest release](https://github.com/sting8k/piggery/releases/latest), `chmod +x` it and put it on
+your PATH.
 
 Using [Paseo](https://paseo.sh)? `piggery setup paseo` adds a Piggery view (the same as
 `piggery top`) to the app. Turn on plugins in Paseo's settings once.
