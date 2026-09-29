@@ -1,0 +1,163 @@
+{
+ "launch_flags": {
+  "model-bogus": {
+   "argv_extra": [
+    "--model",
+    "example/no-such-model"
+   ],
+   "ready": false,
+   "stderr": "Model \"example/no-such-model\" not found\n\nSet an API key environment variable:\n  ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.\n\nOr create /tmp/omp/home/.omp/agent/models.yml"
+  },
+  "thinking-bogus": {
+   "argv_extra": [
+    "--thinking",
+    "bogus"
+   ],
+   "ready": true,
+   "get_state": {
+    "sessionId": "01a0eb03-c02f-7296-bf5a-fd0e5a166726",
+    "messageCount": 0,
+    "thinkingLevel": "max",
+    "model": "glm-5.3-flash",
+    "sessionFile": "/tmp/omp/home/.omp/agent/sessions/--private-tmp-omp-work--/2026-09-29T02-34-46-703Z_01a0eb03-c02f-7296-bf5a-fd0e5a166726.jsonl"
+   }
+  },
+  "thinking-minimal": {
+   "argv_extra": [
+    "--thinking",
+    "minimal"
+   ],
+   "ready": true,
+   "get_state": {
+    "sessionId": "01a0eb03-c1b1-70c2-8572-27c83964dadd",
+    "messageCount": 0,
+    "thinkingLevel": "low",
+    "model": "glm-5.3-flash",
+    "sessionFile": "/tmp/omp/home/.omp/agent/sessions/--private-tmp-omp-work--/2026-09-29T02-34-47-089Z_01a0eb03-c1b1-70c2-8572-27c83964dadd.jsonl"
+   }
+  },
+  "nothing": {
+   "argv_extra": [],
+   "ready": true,
+   "get_state": {
+    "sessionId": "01a0eb03-c2a6-745a-b9b0-336ed57d212a",
+    "messageCount": 0,
+    "thinkingLevel": "high",
+    "model": "glm-5.3-flash",
+    "sessionFile": "/tmp/omp/home/.omp/agent/sessions/--private-tmp-omp-work--/2026-09-29T02-34-47-334Z_01a0eb03-c2a6-745a-b9b0-336ed57d212a.jsonl"
+   }
+  }
+ },
+ "resume_variants": {
+  "first_run": {
+   "sessionId": "01a0eb04-3226-7518-8932-874b4206e790",
+   "messageCount": 2,
+   "thinkingLevel": "low",
+   "model": "glm-5.3-flash",
+   "sessionFile": "/tmp/omp/home/.omp/agent/sessions/--private-tmp-omp-work--/2026-09-29T02-35-15-878Z_01a0eb04-3226-7518-8932-874b4206e790.jsonl"
+  },
+  "full-id": {
+   "argv": "--resume <full id>",
+   "ready": true,
+   "at_start": {
+    "sessionId": "01a0eb04-3226-7518-8932-874b4206e790",
+    "messageCount": 2,
+    "thinkingLevel": "low",
+    "model": "glm-5.3-flash",
+    "sessionFile": "/tmp/omp/home/.omp/agent/sessions/--private-tmp-omp-work--/2026-09-29T02-35-15-878Z_01a0eb04-3226-7518-8932-874b4206e790.jsonl"
+   },
+   "same_session_as_first_run": true
+  },
+  "prefix8": {
+   "argv": "--resume <first 8 chars>",
+   "ready": true,
+   "at_start": {
+    "sessionId": "01a0eb04-3226-7518-8932-874b4206e790",
+    "messageCount": 4,
+    "thinkingLevel": "low",
+    "model": "glm-5.3-flash",
+    "sessionFile": "/tmp/omp/home/.omp/agent/sessions/--private-tmp-omp-work--/2026-09-29T02-35-15-878Z_01a0eb04-3226-7518-8932-874b4206e790.jsonl"
+   },
+   "same_session_as_first_run": true
+  },
+  "path": {
+   "argv": "--resume <session file>",
+   "ready": true,
+   "at_start": {
+    "sessionId": "01a0eb04-3226-7518-8932-874b4206e790",
+    "messageCount": 4,
+    "thinkingLevel": "low",
+    "model": "glm-5.3-flash",
+    "sessionFile": "/tmp/omp/home/.omp/agent/sessions/--private-tmp-omp-work--/2026-09-29T02-35-15-878Z_01a0eb04-3226-7518-8932-874b4206e790.jsonl"
+   },
+   "same_session_as_first_run": true
+  },
+  "other-cwd": {
+   "argv": "--resume <full id>, process started in another cwd",
+   "ready": true,
+   "at_start": {
+    "sessionId": "01a0eb04-3226-7518-8932-874b4206e790",
+    "messageCount": 4,
+    "thinkingLevel": "low",
+    "model": "glm-5.3-flash",
+    "sessionFile": "/tmp/omp/home/.omp/agent/sessions/--private-tmp-omp-work--/2026-09-29T02-35-15-878Z_01a0eb04-3226-7518-8932-874b4206e790.jsonl"
+   },
+   "same_session_as_first_run": true
+  },
+  "unknown-id": {
+   "argv": "--resume ffffffff-0000-0000-0000-000000000000",
+   "ready": false,
+   "stderr": "Error: Session \"ffffffff-0000-0000-0000-000000000000\" not found.\nRun `omp --resume` without an argument to pick from recent sessions, or `omp` to start a new one."
+  }
+ },
+ "early_get_state": {
+  "sent_before_ready": true,
+  "frame_order": [
+   "ready",
+   "extension_ui_request",
+   "advisor_cost_changed",
+   "available_commands_update",
+   "response:get_state",
+   "extension_ui_request"
+  ],
+  "response_index": 4
+ },
+ "per_run_agentdir_without_sessions_link": {
+  "sessionFile_inside_per_run_dir": true,
+  "sessionFile": "/tmp/omp/ad-empty/sessions/--private-tmp-omp-work--/2026-09-29T02-46-37-964Z_01a0eb0e-9a8c-71eb-9f48-8ec99fbd4150.jsonl",
+  "resume_by_id_from_next_run_dir": {
+   "ready": false,
+   "stderr": "Error: Session \"01a0eb0e-a012-7268-b34f-4726c1a6904e\" not found.\nRun `omp --resume` without an argument to pick from recent sessions, or `omp` to start a new one."
+  }
+ },
+ "session_dir_flag": {
+  "new": {
+   "sessionId": "01a0eb0e-a012-7268-b34f-4726c1a6904e",
+   "messageCount": 0,
+   "thinkingLevel": "low",
+   "model": "glm-5.3-flash",
+   "sessionFile": "/tmp/omp/sd1/2026-09-29T02-46-39-378Z_01a0eb0e-a012-7268-b34f-4726c1a6904e.jsonl"
+  },
+  "resumed_in_new_agentdir": {
+   "sessionId": "01a0eb0e-a012-7268-b34f-4726c1a6904e",
+   "messageCount": 2,
+   "thinkingLevel": "low",
+   "model": "glm-5.3-flash",
+   "sessionFile": "/tmp/omp/sd1/2026-09-29T02-46-39-378Z_01a0eb0e-a012-7268-b34f-4726c1a6904e.jsonl"
+  },
+  "same_session": true
+ },
+ "stdin_closed_mid_tool": {
+  "tool_command": "sleep 29",
+  "stdin_closed_s_after_tool_start": 1,
+  "exit_code": 0,
+  "total_run_seconds": 2.7,
+  "frames_after_tool_start": [
+   "tool_execution_start",
+   "tool_execution_end",
+   "message_start",
+   "message_end"
+  ],
+  "leftover_sleep_processes": 0
+ }
+}

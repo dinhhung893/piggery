@@ -72,6 +72,21 @@ func TestUnpackUpgrade(t *testing.T) {
 	if _, err := Resolve("p2p", home); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("p2p (built into the binary, not in this home): %v; want not found", err)
 	}
+	// A file the user edited to exactly the next version is ours again: v3 updates it.
+	if err := os.WriteFile(filepath.Join(Dir(home), "sup/prompts/dev.md"), []byte("dev v2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := unpack(home, v2); err != nil {
+		t.Fatal(err)
+	}
+	v3 := fstest.MapFS{"sup.yaml": v1["sup.yaml"], "prompts/lead.md": v2["prompts/lead.md"],
+		"prompts/dev.md": {Data: []byte("dev v3")}, "gone.yaml": v1["gone.yaml"], "new.yaml": v2["new.yaml"]}
+	if err := unpack(home, v3); err != nil {
+		t.Fatal(err)
+	}
+	if got := read("sup/prompts/dev.md"); got != "dev v3" {
+		t.Fatalf("file edited to the built-in then upgraded = %q; want dev v3", got)
+	}
 }
 
 // template new copies the current built-in under a new name (its model renamed, nothing else

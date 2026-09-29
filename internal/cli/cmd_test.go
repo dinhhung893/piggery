@@ -24,15 +24,14 @@ func TestAdminOnlyVerbWithoutA(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- server.Run(ctx, server.Config{Dir: dir}) }()
 	defer func() { cancel(); <-done }()
-	for i := 0; ; i++ {
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		if c, err := Dial(dir, false); err == nil {
 			c.Close()
 			break
 		}
-		if i == 200 {
+		if time.Now().After(deadline) {
 			t.Fatal("server did not come up")
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	ps := func(args ...string) (int, string) {
 		var out, errOut bytes.Buffer

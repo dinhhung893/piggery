@@ -238,7 +238,7 @@ func (c *claudeCodec) mcpConfig(blacklist []string) (string, error) {
 // writeSettings writes the run's --settings file: the adapter's hooks, each running
 // `piggery hook claude <HookEvent>` (added to the Human's), and every blacklisted plugin off.
 func (c *claudeCodec) writeSettings(s core.Spec, blacklist []string) (string, error) {
-	dir := filepath.Join(c.dir, "harness", "claude-run", s.ParticipantID, s.RunID)
+	dir := filepath.Join(RunRoot(c.dir, "claude"), s.ParticipantID, s.RunID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}

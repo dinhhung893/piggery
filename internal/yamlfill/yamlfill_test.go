@@ -14,7 +14,7 @@ var schema = []Key{
 		{Name: "spawn", Fields: []Key{{Name: "harness", Default: "inherit"}, {Name: "allow_tools", Default: "[]"}}},
 	}},
 	{Name: "routing", Default: "[]", Items: []Key{{Name: "allow", Default: "false"}, {Name: "cc", Default: "[]"}}},
-	{Name: "limits", Fields: []Key{{Name: "depth", Default: "none"}, {Name: "max_hops", Default: "none"}}},
+	{Name: "limits", Fields: []Key{{Name: "depth", Default: "none"}, {Name: "concurrency", Default: "none"}}},
 }
 
 // Missing keys are added in each mapping's own style and nothing written before changes: comments,
@@ -67,7 +67,7 @@ routing:
     cc: []
 limits:
   depth: 3
-  max_hops: none
+  concurrency: none
 summary: ""
 `
 	got, added, err := Fill([]byte(src), schema)

@@ -300,7 +300,9 @@ func (l *limitMap) UnmarshalYAML(n *yaml.Node) error {
 	out := limitMap{}
 	for k, v := range raw {
 		if v.Kind == yaml.ScalarNode && v.Value == "none" {
-			if !knownLimits[k] { // the known-limits check below never sees a key left out
+			// A removed limit set to none is left out like any other: a stored manifest (a team
+			// brought up before) has it, and is re-read on every verb.
+			if !knownLimits[k] && !removedLimits[k] { // the known-limits check never sees a key left out
 				return fmt.Errorf("limits.%s: unknown limit", k)
 			}
 			continue

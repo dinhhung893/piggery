@@ -39,8 +39,6 @@ var manifestKeys = []yamlfill.Key{
 		{Name: "depth", Default: "none"},
 		{Name: "concurrency", Default: "none"},
 		{Name: "messages_per_participant_per_minute", Default: "none"},
-		{Name: "messages_per_thread", Default: "none"},
-		{Name: "max_hops", Default: "none"},
 		{Name: "max_respawn_per_hour", Default: "none"},
 	}},
 }

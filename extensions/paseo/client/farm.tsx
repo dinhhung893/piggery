@@ -107,15 +107,18 @@ function MemberRow({ theme, row, width, indent, selected, onSelect }: { theme: P
 /** A team: chevron · name, then its gate (or none) and held letters as top's title; a closed one, dim. */
 function TeamRow({ theme, unit, open, onToggle }: { theme: PluginTheme; unit: UnitView; open: boolean; onToggle: () => void }) {
   const closed = unit.kind === "closed";
+  const muted = closed || unit.dead !== undefined;
   return (
     <Disclosure theme={theme} open={open} onToggle={onToggle}>
-      <Icon name={closed ? "Archive" : "Users"} size={ICON_SIZE.md} color={closed ? theme.colors.foregroundMuted : theme.colors.foreground} />
-      <Text style={text(theme, "rowTitle", closed ? "foregroundMuted" : "foreground")} numberOfLines={1}>
+      <Icon name={closed ? "Archive" : "Users"} size={ICON_SIZE.md} color={muted ? theme.colors.foregroundMuted : theme.colors.foreground} />
+      <Text style={text(theme, "rowTitle", muted ? "foregroundMuted" : "foreground")} numberOfLines={1}>
         {unit.title}
       </Text>
       <Text style={[text(theme, "meta"), { flexShrink: 1 }]} numberOfLines={1}>
         {closed ? (
           `closed ${ago(unit.closedAt)} ago by ${unit.closedBy || "admin"} · ${unit.rows.length} member${unit.rows.length === 1 ? "" : "s"}`
+        ) : unit.dead ? (
+          `open, all gone · last active ${ago(unit.dead.lastActive)} ago · ${unit.dead.members} member${unit.dead.members === 1 ? "" : "s"}`
         ) : (
           <>
             {unit.gate ? `gate ${unit.gate}` : <Text style={text(theme, "meta", "statusWarning")}>no gate</Text>}
@@ -206,7 +209,7 @@ function Farm({ theme, compact, dir, empty }: { theme: PluginTheme; compact: boo
                 const row = unit.rows[0];
                 return <MemberRow key={unit.id} theme={theme} row={row} width={listWidth} indent={0} selected={row.id === selected} onSelect={() => select(row.id)} />;
               }
-              const open = folds[unit.id] ?? unit.kind === "team";
+              const open = folds[unit.id] ?? unit.open;
               return [
                 <TeamRow key={unit.id} theme={theme} unit={unit} open={open} onToggle={() => setFolds({ ...folds, [unit.id]: !open })} />,
                 open && unit.rows.length === 0 ? (

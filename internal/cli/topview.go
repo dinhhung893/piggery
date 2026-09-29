@@ -434,22 +434,26 @@ func (m *topModel) list(width int, now time.Time) ([]string, []string) {
 					"name": "solo " + s.Name, "state": state, "harness": harnessLabel(s.Harness, false),
 					"model": modelID(s.Model), "ctx": ctx, "turns": turns, "unacked": fmt.Sprint(s.Unacked), "age": ago(s.CreatedAt, now),
 					"since": ago(s.StateSince, now), "cwd": cmp.Or(relCwd(g.dir, s.Cwd), " ")})})
-			case u.closed != nil:
-				c := u.closed
+			case m.oneLine(u):
+				t := u.team
 				mark := "▸ "
-				if m.open[c.ID] {
+				if m.open[t.ID] {
 					mark = "▾ "
 				}
-				by := ""
-				if c.ClosedBy != "" {
-					by = " by " + c.ClosedBy
+				what := "open, all gone · last active " + ago(u.active(), now) + " ago"
+				if c := u.closed; c != nil {
+					by := ""
+					if c.ClosedBy != "" {
+						by = " by " + c.ClosedBy
+					}
+					what = "closed " + ago(c.ClosedAt, now) + " ago" + by
 				}
-				text := mark + c.Name + "   closed " + ago(c.ClosedAt, now) + " ago" + by + " · " + plural(len(c.Members), "member")
-				entries = append(entries, entry{id: closedRow + c.ID, text: row([]string{text}, []int{width - 3}, nil,
-					func(int) lipgloss.Style { return lipgloss.NewStyle().Foreground(colSubtle) }, m.sel == closedRow+c.ID, width)})
-				if m.open[c.ID] {
-					for _, tr := range memberTree(c.Members) {
-						member(g, tr, true)
+				text := mark + t.Name + "   " + what + " · " + plural(len(t.Members), "member")
+				entries = append(entries, entry{id: closedRow + t.ID, text: row([]string{text}, []int{width - 3}, nil,
+					func(int) lipgloss.Style { return lipgloss.NewStyle().Foreground(colSubtle) }, m.sel == closedRow+t.ID, width)})
+				if m.open[t.ID] {
+					for _, tr := range memberTree(t.Members) {
+						member(g, tr, u.closed != nil)
 					}
 				}
 			default:
@@ -539,10 +543,19 @@ func (m *topModel) sidebar(w, h int, now time.Time) []string {
 	for i := range m.ps.Teams {
 		teams = append(teams, &m.ps.Teams[i])
 	}
+	kv := func(k, v string) string { return " " + stMuted.Render(fmt.Sprintf("%-9s", k)) + v }
+	for i := range m.ps.Teams {
+		t := &m.ps.Teams[i]
+		if m.sel == closedRow+t.ID { // a dead team's line: the team's facts
+			return []string{" " + lipgloss.NewStyle().Bold(true).Render(t.Name) + stMuted.Render(" · open, all gone"), "",
+				kv("active", ago(unit{team: t}.active(), now)+" ago"), kv("gate", orDash(t.Gate)),
+				kv("members", fmt.Sprint(len(t.Members))), kv("root", home(t.Root)),
+				" " + stMuted.Render("enter shows its members")}
+		}
+	}
 	for i := range m.ps.Closed {
 		c := &m.ps.Closed[i]
 		if m.sel == closedRow+c.ID { // a closed team's line: the team's facts
-			kv := func(k, v string) string { return " " + stMuted.Render(fmt.Sprintf("%-9s", k)) + v }
 			return []string{" " + lipgloss.NewStyle().Bold(true).Render(c.Name) + stMuted.Render(" · closed"), "",
 				kv("closed", ago(c.ClosedAt, now)+" ago"), kv("by", cmp.Or(c.ClosedBy, "admin")), kv("gate", orDash(c.Gate)),
 				kv("members", fmt.Sprint(len(c.Members))), kv("root", home(c.Root)),
@@ -588,7 +601,6 @@ func (m *topModel) sidebar(w, h int, now time.Time) []string {
 	}
 
 	names := m.names()
-	kv := func(k, v string) string { return " " + stMuted.Render(fmt.Sprintf("%-9s", k)) + v }
 	var name, role, state, ref string
 	var since, created int64
 	var unacked int
@@ -606,6 +618,7 @@ func (m *topModel) sidebar(w, h int, now time.Time) []string {
 	icon, col := stateIcon(state)
 	out := []string{" " + lipgloss.NewStyle().Bold(true).Render(name) + stMuted.Render(" · "+role+" ") + pill(icon, col, colInk), ""}
 	if mem != nil {
+		out = append(out, assignmentRows(mem.Assignment, w-10, now)...)
 		kind := "session"
 		if mem.Headless {
 			kind = "headless worker"
@@ -638,6 +651,57 @@ func (m *topModel) sidebar(w, h int, now time.Time) []string {
 		out = append(out, kv("model", modelLabel(solo.Model, "")), kv("cwd", home(solo.Cwd)))
 	}
 	return append(out, kv("id", stMuted.Render(ref)))
+}
+
+// assignmentRows is the member's current task in the sidebar (width n after the 9-cell label):
+// its title on at most two lines, who gave it and when, how its reply chain stands (muted), and,
+// once the member handed back, the newer mail from the assigner that is not part of the chain
+// (a note, or a task sent without op assign). Nothing when it has none.
+func assignmentRows(a *core.Assignment, n int, now time.Time) []string {
+	if a == nil {
+		return nil
+	}
+	n = max(n, 10)
+	indent := strings.Repeat(" ", 10)
+	lines := wrapTwo(fmt.Sprintf("#%d %s", a.Seq, a.Title), n)
+	out := []string{" " + stMuted.Render(fmt.Sprintf("%-9s", "task")) + lines[0]}
+	for _, l := range lines[1:] {
+		out = append(out, indent+l)
+	}
+	out = append(out, indent+"from "+a.From+" · "+ago(a.At, now)+" ago")
+	if l := a.Latest; l != nil {
+		what := "reply"
+		if l.ByMember {
+			what = "handed back"
+		}
+		out = append(out, indent+stMuted.Render(fmt.Sprintf("%s #%d · %s ago", what, l.Seq, ago(l.At, now))))
+	}
+	if x := a.Newer; x != nil {
+		head, tail := fmt.Sprintf("#%d ", x.Seq), " · "+ago(x.At, now)+" ago"
+		out = append(out, " "+stMuted.Render(fmt.Sprintf("%-9s", "mail")+head+truncate(x.Title, n-lipgloss.Width(head+tail))+tail))
+	}
+	return out
+}
+
+// wrapTwo breaks s at a space into at most two lines of n cells; the second is cut with … if needed.
+func wrapTwo(s string, n int) []string {
+	if lipgloss.Width(s) <= n {
+		return []string{s}
+	}
+	w, at, space := 0, 0, 0
+	for i, r := range s {
+		if w += lipgloss.Width(string(r)); w > n {
+			break
+		}
+		if r == ' ' {
+			space = i
+		}
+		at = i + len(string(r))
+	}
+	if space > 0 {
+		at = space
+	}
+	return []string{strings.TrimSpace(s[:at]), truncate(strings.TrimSpace(s[at:]), n)}
 }
 
 // eventLines is the latest events, newest first (3 in a short window, 5, or 8 in a tall one):

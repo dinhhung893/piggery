@@ -21,15 +21,12 @@ func RenderMail(msgs []Delivered, heading, toolPrefix string, now time.Time) str
 	}
 	parts := make([]string, len(msgs))
 	for i, m := range msgs {
-		a := fmt.Sprintf(`id="#%d" from="%s" sender="%s" thread="#%d"`, m.Seq, m.FromLabel, m.FromName, m.ThreadSeq)
+		a := fmt.Sprintf(`id="#%d" from="%s" sender="%s"`, m.Seq, m.FromLabel, m.FromName)
 		if m.Kind != "" {
 			a += fmt.Sprintf(` kind="%s"`, m.Kind)
 		}
 		if m.ReplyTo != "" {
 			a += fmt.Sprintf(` reply_to="#%d"`, m.ReplyToSeq)
-		}
-		if m.ExpectsReply {
-			a += ` expects_reply="true"`
 		}
 		if m.CcOf != "" { // a routing cc copy
 			a += fmt.Sprintf(` cc_of="#%d" cc_of_mail_to="%s"`, m.CcOfSeq, m.CcTo)
@@ -75,7 +72,7 @@ func shortAge(d time.Duration) string {
 
 // SentText is the model-facing result of a send (the send tool and declarative tools alike).
 func SentText(r SendResult) string {
-	ref := fmt.Sprintf("#%d (thread #%d)", r.Seq, r.ThreadSeq)
+	ref := fmt.Sprintf("#%d", r.Seq)
 	switch {
 	case r.Duplicate:
 		return "duplicate of " + ref

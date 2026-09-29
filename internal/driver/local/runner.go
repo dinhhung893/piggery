@@ -98,6 +98,8 @@ type Options struct {
 	// OnUnbatchedTurn is called when a turn no delivered batch started begins or ends
 	// (core.Engine.UnbatchedTurn).
 	OnUnbatchedTurn func(participantID, runID, event string)
+	// Version is this binary's version: the omp driver makes its workers' extension current for it.
+	Version string
 	// StopWait is how long Stop waits after closing stdin before SIGTERM (default 10s);
 	// TermWait how long after SIGTERM before SIGKILL (default 5s).
 	StopWait, TermWait time.Duration
@@ -118,6 +120,7 @@ type Driver struct {
 type worker struct {
 	participantID string
 	runID         string
+	harness       string // its driver's harness: the name in the errors of a pi-style rpc
 	harnessRef    string // the session id the harness chose (Codex's thread), set by started
 	logPth        string
 	pgid          int
@@ -138,7 +141,7 @@ type worker struct {
 
 // Builtin is every built-in runtime driver over dir, one per harness.
 func Builtin(dir string, opts Options) []*Driver {
-	return []*Driver{New(dir, opts), NewClaude(dir, "", opts), NewCodex(dir, "", opts)}
+	return []*Driver{New(dir, opts), NewClaude(dir, "", opts), NewCodex(dir, "", opts), NewOmp(dir, opts), NewDsh(dir, opts)}
 }
 
 // Harnesses names the harness of each built-in driver, in Builtin's order.
@@ -280,7 +283,7 @@ func (d *Driver) Start(_ context.Context, s core.Spec) (core.Proc, error) {
 		return core.Proc{}, err
 	}
 
-	w := &worker{participantID: s.ParticipantID, runID: s.RunID, logPth: logPth, pgid: cmd.Process.Pid, cmd: cmd, stdin: inW, done: make(chan struct{})}
+	w := &worker{participantID: s.ParticipantID, runID: s.RunID, harness: d.codec.harness(), logPth: logPth, pgid: cmd.Process.Pid, cmd: cmd, stdin: inW, done: make(chan struct{})}
 	d.mu.Lock()
 	d.procs[s.ParticipantID] = w
 	d.mu.Unlock()

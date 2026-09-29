@@ -20,6 +20,7 @@ export interface Member {
   created_at?: number;
   state_since?: number;
   last_turn_end?: number;
+  last_activity?: number;
   reports_to?: string;
   spawned_by?: string;
   cwd?: string;
@@ -31,6 +32,7 @@ export interface Team {
   root?: string;
   gate?: string;
   held?: number;
+  created_at?: number;
   members: Member[];
 }
 
@@ -144,6 +146,10 @@ export interface UnitView {
   /** The team's gate (its name), "" when it has none. */
   gate: string;
   held: number;
+  /** Whether the unit starts unfolded: a live team; a closed or dead one (below) starts folded. */
+  open: boolean;
+  /** An open team whose members are all gone, and when it was last active, as top's one line. */
+  dead?: { lastActive: number; members: number };
   /** A closed team's when and by whom (an empty `closedBy` is the admin). */
   closedAt?: number;
   closedBy?: string;
@@ -155,6 +161,16 @@ export interface ProjectView {
   title: string;
   path: string;
   units: UnitView[];
+}
+
+/** An open team with members, every one of them gone: top lists it as one folded line. */
+export function isDead(team: Team): boolean {
+  return team.members.length > 0 && team.members.every((m) => m.state === "gone");
+}
+
+/** A team's latest activity as top counts it: its creation, any member's activity or state change. */
+function lastActive(team: Team): number {
+  return Math.max(team.created_at ?? 0, ...team.members.map((m) => Math.max(m.last_activity ?? 0, m.state_since ?? 0)));
 }
 
 /** A model as ps shows it: the id without its provider ("zai/glm-5.3" is "glm-5.3"). */
@@ -230,7 +246,7 @@ export function farm(ps: Ps, dir?: string): ProjectView[] {
           root: s.cwd ?? project.path,
           logged: false,
         };
-        units.push({ kind: "solo", id: s.id, title: null, gate: "", held: 0, rows: [row] });
+        units.push({ kind: "solo", id: s.id, title: null, gate: "", held: 0, open: false, rows: [row] });
         continue;
       }
       const closedTeam = unit.kind === "closed" ? closed.get(unit.id) : undefined;
@@ -274,8 +290,10 @@ export function farm(ps: Ps, dir?: string): ProjectView[] {
       const gate = team.gate ? (name.get(team.gate) ?? team.gate) : "";
       units.push(
         closedTeam
-          ? { kind: "closed", id: team.id, title: team.name, gate, held: 0, closedAt: closedTeam.closed_at, closedBy: closedTeam.closed_by ?? "", rows }
-          : { kind: "team", id: team.id, title: team.name, gate, held: team.held ?? 0, rows },
+          ? { kind: "closed", id: team.id, title: team.name, gate, held: 0, open: false, closedAt: closedTeam.closed_at, closedBy: closedTeam.closed_by ?? "", rows }
+          : isDead(team)
+            ? { kind: "team", id: team.id, title: team.name, gate, held: team.held ?? 0, open: false, dead: { lastActive: lastActive(team), members: team.members.length }, rows }
+            : { kind: "team", id: team.id, title: team.name, gate, held: team.held ?? 0, open: true, rows },
       );
     }
     out.push({ title: project.label.replace(/^…\//, ""), path: project.path, units });

@@ -88,3 +88,15 @@ func TestPiSessionReplay(t *testing.T) {
 		}
 	}
 }
+
+// omp's session file has pi's format (message records with usage, plus title and custom records), so
+// the pi reader reads it as is, which is why the omp extension reports format "pi"
+// (testdata/fixtures/omp/session-file-tool-call.jsonl, a real omp 18.4.2 session): the context of the
+// last assistant message, one turn per assistant message, and the tail with the named tool result.
+func TestOmpSessionFileReplay(t *testing.T) {
+	ctx, turns, lines := replay(t, "pi", "../../testdata/fixtures/omp/session-file-tool-call.jsonl")
+	if ctx != 7801 || turns != 2 || len(lines) != 4 || !bytes.HasPrefix([]byte(lines[0]), []byte("user: Call the piggery_who tool")) ||
+		!bytes.HasPrefix([]byte(lines[2]), []byte("< piggery_who ok: ")) || !bytes.HasPrefix([]byte(lines[3]), []byte("assistant: Only one solo session")) {
+		t.Fatalf("ctx %d turns %d tail %q", ctx, turns, lines)
+	}
+}

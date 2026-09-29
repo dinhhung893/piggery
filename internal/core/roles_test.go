@@ -184,7 +184,7 @@ limits: {messages_per_participant_per_minute: 2}
 		return in
 	}
 	send := func() core.SendResult {
-		r, err := e.Send(ctx, a1, core.SendArgs{To: "b1", Body: "plan", Kind: "plan", ExpectsReply: true})
+		r, err := e.Send(ctx, a1, core.SendArgs{To: "b1", Body: "plan", Kind: "plan"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -199,7 +199,7 @@ limits: {messages_per_participant_per_minute: 2}
 		t.Fatalf("recipient inbox = %+v", in)
 	}
 	cp := inbox(c1)
-	if len(cp) != 1 || cp[0].CcOf != orig.ID || cp[0].ExpectsReply || cp[0].ThreadID != orig.ThreadID ||
+	if len(cp) != 1 || cp[0].CcOf != orig.ID ||
 		cp[0].Kind != "plan" || cp[0].FromLabel != "a1 (a)" || cp[0].CcTo != "b1 (b)" {
 		t.Fatalf("c1 copy = %+v", cp)
 	}

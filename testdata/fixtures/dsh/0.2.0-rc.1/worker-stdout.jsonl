@@ -1,0 +1,30 @@
+{"jsonrpc":"2.0","method":"piggery/ready","params":{"session":"00000000-0000-4000-8000-000000000000"}}
+{"jsonrpc":"2.0","method":"session.status","params":{"sessionId":"00000000-0000-4000-8000-000000000000","status":"running"}}
+{"jsonrpc":"2.0","method":"session.event","params":{"sessionId":"00000000-0000-4000-8000-000000000000","event":{"type":"turn/start","seq":4,"time":1790653934184,"data":{"turn":1}}}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"[piggery] 1 new message:\n\n<message id=\"#1\" from=\"boss\" sender=\"boss\">\nReply with exactly the word PIGGY-OK and nothing else.\n</message>"}]}}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"PIGGY-OK"}],"usage":{"input":5609,"output":7,"cacheRead":0,"cacheWrite":0,"totalTokens":5616}}}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"turn_end"}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"agent_end"}}
+{"jsonrpc":"2.0","method":"session.event","params":{"sessionId":"00000000-0000-4000-8000-000000000000","event":{"type":"turn/end","seq":14,"time":1790653935402,"data":{"turn":1,"reason":{"kind":"completed"}}}}}
+{"jsonrpc":"2.0","method":"session.status","params":{"sessionId":"00000000-0000-4000-8000-000000000000","status":"idle"}}
+{"jsonrpc":"2.0","method":"piggery/result","params":{"id":"a1","ok":true}}
+{"jsonrpc":"2.0","method":"piggery/result","params":{"id":"a2","ok":false,"error":"provider \"example\" model \"glm-5.3\" does not support reasoning effort \"high\""}}
+{"jsonrpc":"2.0","method":"piggery/result","params":{"id":"a3","ok":false,"error":"pi-ai provider \"example\" has no configured model \"nope\""}}
+{"jsonrpc":"2.0","method":"session.status","params":{"sessionId":"00000000-0000-4000-8000-000000000000","status":"running"}}
+{"jsonrpc":"2.0","method":"session.event","params":{"sessionId":"00000000-0000-4000-8000-000000000000","event":{"type":"turn/start","seq":16,"time":1790653935479,"data":{"turn":2}}}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"[piggery] 1 new message:\n\n<message id=\"#2\" from=\"boss\" sender=\"boss\">\nReply with exactly the word SECOND and nothing else.\n</message>"}]}}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"SECOND"}],"usage":{"input":5652,"output":2,"cacheRead":0,"cacheWrite":0,"totalTokens":5654}}}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"turn_end"}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"agent_end"}}
+{"jsonrpc":"2.0","method":"session.event","params":{"sessionId":"00000000-0000-4000-8000-000000000000","event":{"type":"turn/end","seq":24,"time":1790653938099,"data":{"turn":2,"reason":{"kind":"completed"}}}}}
+{"jsonrpc":"2.0","method":"session.status","params":{"sessionId":"00000000-0000-4000-8000-000000000000","status":"idle"}}
+{"jsonrpc":"2.0","method":"session.status","params":{"sessionId":"00000000-0000-4000-8000-000000000000","status":"running"}}
+{"jsonrpc":"2.0","method":"session.event","params":{"sessionId":"00000000-0000-4000-8000-000000000000","event":{"type":"turn/start","seq":26,"time":1790653938121,"data":{"turn":3}}}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"[piggery] 1 new message:\n\n<message id=\"#3\" from=\"boss\" sender=\"boss\">\nRun the shell command `sleep 30` using your bash tool, then say DONE.\n</message>"}]}}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"message_end","message":{"role":"assistant","content":[],"usage":{"input":68,"output":32,"cacheRead":5632,"cacheWrite":0,"totalTokens":5732}}}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"tool_execution_start","toolName":"bash","args":{"command":"sleep 30","description":"Sleep for 30 seconds"}}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"tool_execution_end","toolName":"bash","isError":true,"result":{"content":[{"type":"text","text":"Error: tool call aborted"}]}}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"turn_end"}}
+{"jsonrpc":"2.0","method":"piggery/record","params":{"type":"agent_end"}}
+{"jsonrpc":"2.0","method":"session.event","params":{"sessionId":"00000000-0000-4000-8000-000000000000","event":{"type":"turn/end","seq":34,"time":1790653943010,"data":{"turn":3,"reason":{"kind":"aborted","reason":{"kind":"hook","reason":"piggery abort"}}}}}}
+{"jsonrpc":"2.0","method":"session.status","params":{"sessionId":"00000000-0000-4000-8000-000000000000","status":"idle"}}

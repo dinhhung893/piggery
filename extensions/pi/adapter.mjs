@@ -1,4 +1,4 @@
-// pi's events as the standard adapter events. Pure: no pi, no socket.
+// pi's events (and omp's: extensions/omp maps its own onto these methods) as the standard adapter events. Pure: no pi, no socket.
 //
 // The daemon counts batches and applies the ack rule for every harness; this module only
 // maps pi's events to `harness.event` calls and does what the answer says: mail text goes to the
@@ -90,6 +90,19 @@ export class Turns {
 			}
 			if (this.key === key) this.key = null;
 		});
+	}
+
+	/**
+	 * A run ended for good with no awaited hook before it (omp: a terminal agent_end that no
+	 * session_stop preceded, as after an abort or a compaction dead end). The turn ends as
+	 * beforeSettle ends it, with outcome "completed" | "aborted" | "error"; mail the turn had not
+	 * seen blocks that end (the text is shown, a run with it follows and it is the same turn, so
+	 * nothing settles); else the run settles. pi does not call this.
+	 */
+	async endRun(outcome) {
+		await this.beforeSettle(outcome);
+		if (this.key) return;
+		this.settled();
 	}
 
 	settled() {

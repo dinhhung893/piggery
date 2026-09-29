@@ -16,7 +16,7 @@ are `#N`; people and teams are names.
 
 ```sh
 piggery who                                   # your team, other teams (name, gate), solos
-piggery send <to> "text" [--reply-to #N] [--expects-reply] [--kind K]
+piggery send <to> "text" [--reply-to #N] [--kind K]
 piggery inbox                                 # new mail (read only)
 piggery inbox --view board                    # the team board
 piggery completion --batch N                  # ack a batch you pulled with inbox --batch N
@@ -25,7 +25,10 @@ piggery completion --batch N                  # ack a batch you pulled with inbo
 - `to`: a teammate's name; another team's name (reaches its gate; only gates write between
   teams); a solo's name; `board` (pins: `--op replace|remove --target #N`); `notify` (one way,
   to the Human; nothing comes back).
-- Reply with `--reply-to` the `#N` you answer; `--expects-reply` only when you need an answer.
+- `--op assign` (to a member that reports to you): the mail becomes that member's current task,
+  shown in `piggery top`; a later assign replaces it. Put a short title on the first line. A task
+  given by `agent spawn|resume` is one already.
+- Reply with `--reply-to` the `#N` you answer.
   `kind` is a free label for the receiver; piggery never reads it.
 - After sending, end your turn: mail wakes you. Do not poll.
 
@@ -45,6 +48,20 @@ become its gate), `admit` (take a solo session at your team's root into a role y
 `close` (the gate closes its own team; you become solo), `reopen` (a solo at a closed team's root
 opens it again and becomes its gate). In pi these are `piggery_agent` actions.
 
+**Changing a worker's model** (only when the Human asks you to; it is an admin command, so it
+needs `--admin` in your shell):
+
+```sh
+piggery --admin model <worker> <provider/model> [--thinking L]   # model, and optionally the level
+piggery --admin model <worker> --thinking L                      # only the thinking level
+piggery ps                                                       # check: its model column
+```
+
+It works on headless workers only (a session's model is chosen in that session). A running worker
+switches from its next turn and keeps its context; a stopped one gets it when resumed. Name the
+model as the worker's harness does (pi and omp: `provider/model`); a model or level the harness does
+not run is refused and nothing changes. Tell the Human what `ps` shows after.
+
 ## Writing a template (when the Human asks)
 
 A template is `~/.piggery/templates/<name>/manifest.yaml` plus the prompt files it names,
@@ -58,12 +75,12 @@ set `model:` to that name. You do not bring it up: the Human does, or asks a ses
 - `roles.<role>` (at least one): `description` (one line); `instructions_file` or `instructions`;
   `tools` (`send`, `inbox`, `who`, `agent`; there are no other tools); `can_spawn: [role]`; `can_pin: true` (board, needs
   `send`); `can_set_cwd: true` (may spawn a worker in another directory); `spawn: {model:
-  provider/id, thinking: level, harness: pi|claude|codex}` (omit to inherit the founding session's).
+  provider/id, thinking: level, harness: pi|claude|codex|omp|dsh}` (omit to inherit the founding session's).
 - `routing`: `{from: role, to: role, allow: true|false, cc: [role]}`; the first rule matching
   (sender's role, recipient's role) decides, none means denied; `to: notify` lets a role notify
   the Human; `cc` copies other members of those roles. Mail between teams ignores routing.
 - `limits`: `depth` and `concurrency` (required once a role can spawn),
-  `messages_per_participant_per_minute`, `messages_per_thread`, `max_hops`, `max_respawn_per_hour`.
+  `messages_per_participant_per_minute`, `max_respawn_per_hour`.
 - `timers`: `{on: role, silent_for: 20m, notify: reports_to|notify|<role>}`: one notice when that
   role works with no turn end for that long.
 

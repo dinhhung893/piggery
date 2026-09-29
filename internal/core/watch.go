@@ -173,7 +173,7 @@ func (t *txn) watchRule(teamID string, idx int, r watchRule, d time.Duration) (f
 			}
 			body := fmt.Sprintf("%s %s (rule silent_for %s).", who, in.what, r.SilentFor)
 			msg := newID(t.now)
-			if _, err := t.insertMessage(msg, "", teamID, AddrEngine, to.id, "", msg, "", false, "", "", body); err != nil {
+			if _, err := t.insertMessage(msg, "", teamID, AddrEngine, to.id, "", "", "", "", body); err != nil {
 				return 0, nil, nil, err
 			}
 			if to.id == AddrNotify {

@@ -150,10 +150,10 @@ func (e *env) root() *cobra.Command {
 		"piggery archive show ~/.piggery/archive/demo-1790000000.jsonl --table messages", authLocal, e.archiveShow))
 
 	root.AddCommand(
-		e.cmd("setup [pi|claude|codex|paseo] | setup remove <harness> [--ext PATH] [--force]", "Add piggery to a harness or take it out; alone: profiles, templates, and where each harness stands", grpStart,
+		e.cmd("setup [pi|claude|codex|omp|dsh|paseo] | setup remove <harness> [--ext PATH] [--force]", "Add piggery to a harness or take it out; alone: profiles, templates, and where each harness stands", grpStart,
 			"piggery setup", authLocal, e.setup),
 		e.cmd("skills", "Print the guide for agents (a SKILL.md)", grpStart,
-			"piggery skills > ~/.pi/agent/skills/piggery/SKILL.md", authLocal, func(args []string) error {
+			"piggery skills", authLocal, func(args []string) error {
 				if len(args) != 0 {
 					return fmt.Errorf("%w: skills takes no arguments", errUsage)
 				}
@@ -198,7 +198,7 @@ func (e *env) root() *cobra.Command {
 
 		// Participant (agent) commands and join: hidden, still run.
 		e.cmd("join --team T --role R --name N [--cwd D]", "", "", "", authAdmin, e.join),
-		e.cmd("send <to> [body] [--kind K] [--reply-to ID] [--expects-reply] [--client-msg-id ID] [--op replace|remove] [--target ID]",
+		e.cmd("send <to> [body] [--kind K] [--reply-to ID] [--client-msg-id ID] [--op assign|replace|remove] [--target ID]",
 			"", "", "", authParticipant, e.send),
 		e.cmd("inbox [--batch N] [--view V]", "", "", "", authParticipant, e.inbox),
 		e.cmd("completion --batch N", "", "", "", authParticipant, e.completion),

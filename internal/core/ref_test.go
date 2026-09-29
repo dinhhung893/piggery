@@ -14,8 +14,10 @@ func TestMessageRefs(t *testing.T) {
 	ref := func(r core.SendResult) string { return fmt.Sprintf("#%d", r.Seq) }
 
 	first := f.send(t, f.alice, "bob", "")
-	if reply := f.send(t, f.bob, "alice", ref(first)); reply.ThreadID != first.ThreadID {
-		t.Fatalf("reply_to %s: thread %s, want %s", ref(first), reply.ThreadID, first.ThreadID)
+	f.send(t, f.bob, "alice", ref(first))
+	f.send(t, f.bob, "alice", fmt.Sprint(first.Seq)) // a model that drops the "#"
+	if in, _ := f.e.Inbox(ctx, f.alice, core.InboxArgs{}); len(in) != 2 || in[0].ReplyTo != first.ID || in[0].ReplyToSeq != first.Seq || in[1].ReplyTo != first.ID {
+		t.Fatalf("reply_to %s and %d: alice's inbox = %+v", ref(first), first.Seq, in)
 	}
 	pin, err := f.e.Send(ctx, f.alice, core.SendArgs{To: core.AddrBoard, Body: "v1"})
 	if err != nil {

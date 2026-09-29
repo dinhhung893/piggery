@@ -1,0 +1,49 @@
+{"n": 1, "ms": 0, "ev": "_loaded", "piKeys": ["arktype", "cwd", "events", "extension", "flagValues", "logger", "pendingProviderRegistrations", "pi", "runtime", "typebox", "zod"]}
+{"n": 2, "ms": 53, "ev": "session_start", "type": "session_start", "ctx": {"idle": true, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 3, "ms": 53, "ev": "_ctx", "mode": "rpc", "hasUI": true, "cwd": "<env>/proj", "sessionId": "01a0eb05-4960-7566-88b6-823c3377b454", "sessionFile": "<env>/agent/sessions/-proj/2026-09-29T02-36-27-360Z_01a0eb05-4960-7566-88b6-823c3377b454.jsonl", "agent": {"kind": "main", "id": "Main", "name": "main", "depth": 0}}
+{"n": 4, "ms": 266, "ev": "before_agent_start", "type": "before_agent_start", "prompt": "Reply with exactly the word: one", "systemPrompt": ["RFC 2119 keywords: MUST, REQUIRED, SHOULD, RECOMMENDED, MAY, OPTIONAL. `NEVER` = `MUST NOT`; `AVOID` = `SHOULD NOT`.\nXML…", "<project-context>\n<workstation>\n- OS: darwin 24.6.0\n- Arch: arm64\n- Model: example/glm-5.3-flash\n</workstation>\n</project-con…"], "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 5, "ms": 298, "ev": "agent_start", "type": "agent_start", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 6, "ms": 320, "ev": "context", "messages": 1, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 7, "ms": 328, "ev": "turn_start", "turnIndex": 0, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 8, "ms": 328, "ev": "message_start", "role": "user", "text": "[{\"type\":\"text\",\"text\":\"Reply with exactly the word: one\"}]", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 9, "ms": 329, "ev": "message_end", "role": "user", "text": "[{\"type\":\"text\",\"text\":\"Reply with exactly the word: one\"}]", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 10, "ms": 2888, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 11, "ms": 4476, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 12, "ms": 6467, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 13, "ms": 6534, "ev": "message_start", "role": "assistant", "stopReason": "stop", "text": "[]", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 14, "ms": 6537, "ev": "message_end", "role": "assistant", "stopReason": "stop", "text": "[]", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 15, "ms": 6544, "ev": "turn_end", "turnIndex": 0, "toolResults": 0, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 16, "ms": 6554, "ev": "agent_start", "type": "agent_start", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 17, "ms": 6555, "ev": "agent_end", "willContinue": true, "messages": 2, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 18, "ms": 6556, "ev": "context", "messages": 2, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 19, "ms": 6563, "ev": "turn_start", "turnIndex": 0, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 20, "ms": 7600, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 21, "ms": 9166, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 22, "ms": 11318, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 23, "ms": 11447, "ev": "message_start", "role": "assistant", "stopReason": "stop", "text": "[]", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 24, "ms": 11448, "ev": "message_end", "role": "assistant", "stopReason": "stop", "text": "[]", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 25, "ms": 11449, "ev": "turn_end", "turnIndex": 0, "toolResults": 0, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 26, "ms": 11452, "ev": "agent_start", "type": "agent_start", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 27, "ms": 11452, "ev": "agent_end", "willContinue": true, "messages": 3, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 28, "ms": 11452, "ev": "context", "messages": 3, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 29, "ms": 11455, "ev": "turn_start", "turnIndex": 0, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 30, "ms": 12404, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 31, "ms": 13885, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 32, "ms": 15948, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 33, "ms": 16000, "ev": "message_start", "role": "assistant", "stopReason": "stop", "text": "[]", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 34, "ms": 16002, "ev": "message_end", "role": "assistant", "stopReason": "stop", "text": "[]", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 35, "ms": 16005, "ev": "turn_end", "turnIndex": 0, "toolResults": 0, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 36, "ms": 16012, "ev": "agent_start", "type": "agent_start", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 37, "ms": 16013, "ev": "agent_end", "willContinue": true, "messages": 4, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 38, "ms": 16014, "ev": "context", "messages": 4, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 39, "ms": 16019, "ev": "turn_start", "turnIndex": 0, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 40, "ms": 17049, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 41, "ms": 18711, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 42, "ms": 20669, "ev": "after_provider_response", "type": "after_provider_response", "status": 200, "requestId": null, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 43, "ms": 20727, "ev": "message_start", "role": "assistant", "stopReason": "stop", "text": "[]", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 44, "ms": 20728, "ev": "message_end", "role": "assistant", "stopReason": "stop", "text": "[]", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 45, "ms": 20729, "ev": "turn_end", "turnIndex": 0, "toolResults": 0, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 46, "ms": 20730, "ev": "auto_retry_end", "type": "auto_retry_end", "success": false, "attempt": 3, "finalError": "Assistant returned empty stop after retry cap; try switching models or `/shake images` to remove archived frames", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 47, "ms": 20734, "ev": "session_stop", "stop_hook_active": false, "turn_id": 0, "messages": 5, "last": "[]", "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 48, "ms": 20734, "ev": "agent_end", "messages": 5, "ctx": {"idle": false, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}
+{"n": 49, "ms": 22414, "ev": "session_shutdown", "type": "session_shutdown", "ctx": {"idle": true, "pending": false, "model": "example/glm-5.3-flash", "thinking": "off"}}

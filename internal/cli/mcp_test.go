@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	dshext "github.com/sting8k/piggery/extensions/dsh"
+	ompext "github.com/sting8k/piggery/extensions/omp"
 	piext "github.com/sting8k/piggery/extensions/pi"
 	"github.com/sting8k/piggery/internal/core"
 	"github.com/sting8k/piggery/internal/proto"
@@ -114,7 +116,7 @@ func TestMCP(t *testing.T) {
 		case proto.VerbIdentify:
 			return core.IdentifyResult{ParticipantID: "P", RunID: "R", Tools: tools}
 		case proto.VerbSend:
-			return core.SendResult{Seq: 7, ThreadSeq: 3}
+			return core.SendResult{Seq: 7}
 		}
 		return map[string]any{}
 	})
@@ -171,7 +173,7 @@ func TestMCP(t *testing.T) {
 		t.Fatalf("identify = %+v", id)
 	}
 	sent := rpc(2, "tools/call", map[string]any{"name": "send", "arguments": map[string]any{"to": "lead", "body": "hi"}})
-	if txt := sent["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"]; txt != "sent #7 (thread #3)" {
+	if txt := sent["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"]; txt != "sent #7" {
 		t.Fatalf("send = %v", sent)
 	}
 
@@ -508,14 +510,29 @@ func TestHookCodexRejoinsWhenHostUnknown(t *testing.T) {
 	}
 }
 
-// The pi extension's protocol version is written by hand in TypeScript; it must be the daemon's.
-func TestPiExtensionProtocolVersion(t *testing.T) {
-	src, err := piext.Files.ReadFile("index.ts")
+// The pi, omp and dsh extensions' protocol version is written by hand in TypeScript; it must be the daemon's.
+func TestExtensionsProtocolVersion(t *testing.T) {
+	pi, err := piext.Files.ReadFile("index.ts")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := fmt.Sprintf("const PROTOCOL_VERSION = %d;", core.ProtocolVersion); !strings.Contains(string(src), want) {
+	omp, err := ompext.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dsh, err := dshext.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("const PROTOCOL_VERSION = %d;", core.ProtocolVersion)
+	if !strings.Contains(string(pi), want) {
 		t.Fatalf("extensions/pi/index.ts lacks %q", want)
+	}
+	if !strings.Contains(string(omp[ompext.Entry]), want) {
+		t.Fatalf("extensions/omp/index.ts lacks %q", want)
+	}
+	if !strings.Contains(string(dsh[dshext.Entry]), want) {
+		t.Fatalf("extensions/dsh/index.mjs lacks %q", want)
 	}
 }
 

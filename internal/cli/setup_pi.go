@@ -273,10 +273,17 @@ func piStatus(dir, self, version string) harnessState {
 	if !st.Installed {
 		return st
 	}
-	if p, err := exec.LookPath("piggery"); err != nil {
-		st.Problems = append(st.Problems, problem{"`piggery` is not on PATH: the extension cannot start the daemon", "put " + self + " on PATH as piggery"})
-	} else if r, _ := filepath.EvalSymlinks(p); r != self {
-		st.Problems = append(st.Problems, problem{fmt.Sprintf("`piggery` on PATH is %s, not %s: the extension starts that one", p, self), "put " + self + " first on PATH as piggery"})
-	}
+	st.Problems = append(st.Problems, piggeryOnPath(self)...)
 	return st
+}
+
+// piggeryOnPath is what is wrong with `piggery` on PATH for an extension that starts the daemon
+// with it: it is missing, or another binary than self (nil when it is self).
+func piggeryOnPath(self string) []problem {
+	if p, err := exec.LookPath("piggery"); err != nil {
+		return []problem{{"`piggery` is not on PATH: the extension cannot start the daemon", "put " + self + " on PATH as piggery"}}
+	} else if r, _ := filepath.EvalSymlinks(p); r != self {
+		return []problem{{fmt.Sprintf("`piggery` on PATH is %s, not %s: the extension starts that one", p, self), "put " + self + " first on PATH as piggery"}}
+	}
+	return nil
 }

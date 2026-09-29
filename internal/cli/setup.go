@@ -17,10 +17,10 @@ import (
 )
 
 // setup:
-//   - `piggery setup` writes the worker profiles (~/.piggery/harness/{pi,claude,codex}.json, an
+//   - `piggery setup` writes the worker profiles (~/.piggery/harness/{pi,claude,codex,omp,dsh}.json, an
 //     existing one kept unless --force), the templates and the daemon's config.yaml (only its
 //     missing keys, with their defaults), then shows where each harness and the config stand;
-//   - `piggery setup <pi|claude|codex|paseo>` adds piggery to that harness, or its plugin to
+//   - `piggery setup <pi|claude|codex|omp|dsh|paseo>` adds piggery to that harness, or its plugin to
 //     Paseo (a second run changes nothing);
 //   - `piggery setup remove <name>` takes out what setup added.
 func (e *env) setup(args []string) error {
@@ -32,7 +32,7 @@ func (e *env) setup(args []string) error {
 	if err != nil {
 		return err
 	}
-	usage := fmt.Errorf("%w: setup [pi|claude|codex|paseo] | setup remove <pi|claude|codex|paseo> [--ext PATH] [--paseo-home PATH] [--force]", errUsage)
+	usage := fmt.Errorf("%w: setup [pi|claude|codex|omp|dsh|paseo] | setup remove <pi|claude|codex|omp|dsh|paseo> [--ext PATH] [--paseo-home PATH] [--force]", errUsage)
 	self, err := selfPath()
 	if err != nil {
 		return err
@@ -76,6 +76,8 @@ func (e *env) setup(args []string) error {
 		{local.ProfilePath(e.dir), "pi workers", local.DefaultProfile(index)},
 		{local.ClaudeProfilePath(e.dir), "Claude Code workers", local.DefaultClaudeProfile},
 		{local.CodexProfilePath(e.dir), "Codex workers", local.DefaultCodexProfile},
+		{local.OmpProfilePath(e.dir), "omp workers", local.DefaultOmpProfile},
+		{local.DshProfilePath(e.dir), "dsh workers", local.DefaultDshProfile},
 	} {
 		if w, err := writeJSON(p.path, p.def, *force); err != nil {
 			return err
@@ -199,7 +201,11 @@ func harnessStates(o setupOpts) []harnessState {
 		}
 		if path, err := exec.LookPath(st.Cmd); err == nil {
 			st.Path = path
-			st.Version, _ = local.HarnessVersion(context.Background(), st.Cmd)
+			version := local.HarnessVersion
+			if t.version != nil {
+				version = t.version
+			}
+			st.Version, _ = version(context.Background(), st.Cmd)
 		} else if st.Installed {
 			st.Problems = append([]problem{{fmt.Sprintf("`%s` is not on PATH", st.Cmd), "install it, or `piggery setup remove " + st.Name + "`"}}, st.Problems...)
 		}

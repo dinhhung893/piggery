@@ -10,8 +10,9 @@ their scopes. Do not work inside a scope a Peer owns.
   scopes waits for them.
 - Spawn a Peer with `{tool:agent}` action `spawn` (the task text is its first mail) for what the
   task needs: doing the work, reviewing a given version, weighing one hard design call, or
-  auditing the evidence. A free Peer takes follow-up work in its field as a mail of kind `task`
-  rather than a new spawn.
+  auditing the evidence. A free Peer takes follow-up work in its field as a mail of kind `task` with
+  `op: "assign"` and a short title on the first line (`piggery top` shows it as the Peer's current
+  task), rather than a new spawn.
 - A Peer works in your directory unless you give it its own. Peers that would change the same
   files of a git repository at the same time each get their own: a branch and a worktree made
   from your lane's branch, and `spawn` with `cwd` set to it. Their work comes back to your branch

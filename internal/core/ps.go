@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"slices"
+	"strings"
 )
 
 // Operator snapshot: what `ps` and `top` show. Read-only: state tables only, no event, no state
@@ -81,6 +83,52 @@ type MemberState struct {
 	// Transcript is its session's own file as its adapter reported it (the CLI reads ctx, turns
 	// and tail from it); nil for a headless worker (its driver log) or none reported.
 	Transcript *Transcript `json:"transcript,omitempty"`
+	// Assignment is the latest mail marked op assign to it (a spawn or resume task is one); nil = none.
+	Assignment *Assignment `json:"assignment,omitempty"`
+}
+
+// Assignment is a member's current task: a stored mail, not a field anyone reports.
+type Assignment struct {
+	Seq   int64  `json:"seq"`
+	Title string `json:"title"` // the first non-empty line of the body, plain, capped
+	From  string `json:"from"`  // the sender's name; "admin" for the admin's resume
+	At    int64  `json:"at"`
+	// Latest is the newest mail in the reply chain rooted at the assignment (mails whose reply_to
+	// leads back to it); nil = the assignment itself is the newest.
+	Latest *ChainMail `json:"latest,omitempty"`
+	// Newer is set when the chain ends with the member's own mail and the assigner has since sent
+	// the member a mail outside the chain (a task whose op assign was forgotten, or a note): the
+	// newest such mail.
+	Newer *NewerMail `json:"newer,omitempty"`
+}
+
+type ChainMail struct {
+	Seq      int64 `json:"seq"`
+	At       int64 `json:"at"`
+	ByMember bool  `json:"by_member"` // the member sent it (a handback or a question); else it is live again
+}
+
+type NewerMail struct {
+	Seq   int64  `json:"seq"`
+	Title string `json:"title"`
+	At    int64  `json:"at"`
+}
+
+var mdPairs = regexp.MustCompile("\\*\\*([^*]+)\\*\\*|__([^_]+)__|`([^`]+)`")
+
+// assignmentTitle is body's first non-empty line without Markdown markers, at most 100 runes.
+func assignmentTitle(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(mdPairs.ReplaceAllString(strings.TrimSpace(line), "$1$2$3"), "#>-*+ \t"))
+		if line == "" {
+			continue
+		}
+		if r := []rune(line); len(r) > 100 {
+			line = string(r[:100]) + "…"
+		}
+		return line
+	}
+	return ""
 }
 
 // SoloState is a live solo session.
@@ -262,6 +310,10 @@ func (t *txn) teamMembers(ts *TeamState, pending map[string][2]int) error {
 	}
 	ts.Gate = gate.name
 	ts.Members = []MemberState{}
+	assigned, err := t.assignments(ts.ID)
+	if err != nil {
+		return err
+	}
 	rows, err := t.QueryContext(t.ctx, `SELECT `+participantCols+`, COALESCE(mode,''), last_turn_end, left_at,
 		COALESCE(session_model, model, ''), COALESCE(session_thinking, thinking, ''), COALESCE(capabilities, 'null'),
 		created_at, COALESCE(spawned_by, ''), cwd, protocol_version, transcript, transcript_format
@@ -290,13 +342,76 @@ func (t *txn) teamMembers(ts *TeamState, pending map[string][2]int) error {
 			Headless: mode == modeHeadless, Gate: q.id == gate.id, StateSince: q.stateSince,
 			LastTurnEnd: turn.Int64, Unacked: n[0], Model: model, Thinking: thinking, RunID: q.run, ReportsTo: q.reportsTo,
 			CreatedAt: created, SpawnedBy: spawnedBy, Harness: q.harness, LastActivity: q.lastActivity, Cwd: cwd,
-			ProtocolVersion: intOrNil(proto), Transcript: transcriptOrNil(tpath, tformat)})
+			ProtocolVersion: intOrNil(proto), Transcript: transcriptOrNil(tpath, tformat), Assignment: assigned[q.id]})
 		json.Unmarshal([]byte(caps), &ts.Members[len(ts.Members)-1].Capabilities)
 	}
 	if err := rows.Err(); err != nil {
 		return internal(err)
 	}
 	return nil
+}
+
+// assignments returns, per member of the team, its latest delivered mail marked op assign, with
+// the state of that assignment's reply chain (see Assignment).
+func (t *txn) assignments(team string) (map[string]*Assignment, error) {
+	rows, err := t.QueryContext(t.ctx, `SELECT m.to_id, m.id, m.seq, m.body, m.from_id, COALESCE(f.name, 'admin'), m.created_at
+		FROM messages m LEFT JOIN participants f ON f.id=m.from_id
+		WHERE m.op=? AND m.held_reason IS NULL AND m.to_id IN (SELECT id FROM participants WHERE team_id=?)
+		AND m.seq=(SELECT MAX(x.seq) FROM messages x WHERE x.op=m.op AND x.to_id=m.to_id AND x.held_reason IS NULL)`,
+		OpAssign, team)
+	if err != nil {
+		return nil, internal(err)
+	}
+	defer rows.Close()
+	out := map[string]*Assignment{}
+	from := map[string]string{} // member -> assigner's id
+	ids := map[string]string{}  // member -> assignment message id
+	for rows.Next() {
+		var to, id, body, fromID string
+		var a Assignment
+		if err := rows.Scan(&to, &id, &a.Seq, &body, &fromID, &a.From, &a.At); err != nil {
+			return nil, internal(err)
+		}
+		a.Title = assignmentTitle(body)
+		out[to], from[to], ids[to] = &a, fromID, id
+	}
+	if err := rows.Err(); err != nil {
+		return nil, internal(err)
+	}
+	rows.Close()
+	for to, a := range out {
+		var c ChainMail
+		var sender string
+		err := t.QueryRowContext(t.ctx, `WITH RECURSIVE chain(id) AS (
+				SELECT ? UNION SELECT m.id FROM messages m JOIN chain ON m.reply_to=chain.id)
+			SELECT seq, created_at, from_id FROM messages WHERE id IN chain AND id<>? ORDER BY seq DESC LIMIT 1`,
+			ids[to], ids[to]).Scan(&c.Seq, &c.At, &sender)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, internal(err)
+		}
+		c.ByMember = sender == to
+		a.Latest = &c
+		if !c.ByMember {
+			continue
+		}
+		var n NewerMail
+		var body string
+		err = t.QueryRowContext(t.ctx, `SELECT seq, body, created_at FROM messages
+			WHERE from_id=? AND to_id=? AND seq>? AND cc_of IS NULL AND held_reason IS NULL ORDER BY seq DESC LIMIT 1`,
+			from[to], to, c.Seq).Scan(&n.Seq, &body, &n.At)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, internal(err)
+		}
+		n.Title = assignmentTitle(body)
+		a.Newer = &n
+	}
+	return out, nil
 }
 
 func transcriptOrNil(path, format sql.NullString) *Transcript {

@@ -54,6 +54,9 @@ func validManifest(text string) (manifest, error) {
 		return m, err
 	}
 	for k := range m.Limits {
+		if removedLimits[k] { // `none` never gets here: a limit set to none is left out
+			return m, errf(CodeInvalid, "manifest: limits.%s was removed from piggery; delete the key (messages_per_participant_per_minute is the flood guard)", k)
+		}
 		if !knownLimits[k] {
 			return m, errf(CodeInvalid, "manifest: limits.%s: unknown limit", k)
 		}
@@ -256,4 +259,9 @@ func orDefault(s, def string) string {
 
 // knownLimits are the manifest limits the engine enforces; any other key is a mistake.
 var knownLimits = map[string]bool{"depth": true, "concurrency": true, "messages_per_participant_per_minute": true,
-	"messages_per_thread": true, "max_hops": true, "max_respawn_per_hour": true}
+	"max_respawn_per_hour": true}
+
+// removedLimits are limits that no longer exist (nothing enforced them by a mechanism the model
+// cannot skip). A template still setting one is refused, not ignored; a team
+// brought up before keeps its stored manifest, which the engine never checks again.
+var removedLimits = map[string]bool{"messages_per_thread": true, "max_hops": true}

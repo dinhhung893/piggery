@@ -207,10 +207,11 @@ func unpack(home string, src fs.FS) error {
 				}
 			case err != nil:
 				return err
+			case hash(cur) == want:
+				rec[rel] = want // already this version (also when edited to it by hand): ours again
+				continue
 			case hash(cur) != rec[rel]:
 				continue // changed by the user (or not ours)
-			case hash(cur) == want:
-				continue
 			}
 			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 				return err

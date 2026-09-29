@@ -18,7 +18,8 @@ import (
 )
 
 // Automatic gc on a fake clock: with gc off nothing is touched; with the defaults a team closed
-// longer than closed_after goes with its participants' run log dirs, a younger one stays, and an
+// longer than closed_after goes with its participants' entries in logs/, run/ and sessions/ (and
+// nothing else in the directory), a younger one stays, and an
 // archive older than archive_keep is deleted while a newer one stays.
 func TestAutoGC(t *testing.T) {
 	ctx := context.Background()
@@ -30,7 +31,8 @@ func TestAutoGC(t *testing.T) {
 	defer db.Close()
 	now := time.Now()
 	eng := core.New(db, core.WithClock(func() time.Time { return now }))
-	logs := map[string]string{} // team -> its member's run log dir
+	logs := map[string]string{}  // team -> its member's run log dir
+	own := map[string][]string{} // team -> its member's entries in run/ and sessions/
 	closeTeam := func(name string) {
 		t.Helper()
 		team, err := eng.TeamUp(ctx, core.TeamUpArgs{Name: name, Cwd: t.TempDir(),
@@ -48,6 +50,15 @@ func TestAutoGC(t *testing.T) {
 		}
 		if err := os.WriteFile(local.LogPath(dir, j.ID, "r1"), []byte("{}\n"), 0o600); err != nil {
 			t.Fatal(err)
+		}
+		own[name] = []string{filepath.Join(local.RunRoot(dir, "omp"), j.ID, "r1"), filepath.Join(local.SessionsRoot(dir, "dsh"), j.ID)}
+		for _, p := range own[name] {
+			if err := os.MkdirAll(p, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(p, "f"), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if _, err := eng.TeamDown(ctx, core.TeamDownArgs{Team: name}); err != nil {
 			t.Fatal(err)
@@ -80,12 +91,25 @@ func TestAutoGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "piggery.db"), []byte("db"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	res, err := runGC(ctx, eng, dir, set)
-	if err != nil || len(res.Teams) != 1 || res.Teams[0].Name != "old" || !res.Teams[0].Deleted || res.Teams[0].LogDirs != 1 {
-		t.Fatalf("gc: %+v, %v; want old deleted with its one log dir", res, err)
+	if err != nil || len(res.Teams) != 1 || res.Teams[0].Name != "old" || !res.Teams[0].Deleted || res.Teams[0].LogDirs != 3 {
+		t.Fatalf("gc: %+v, %v; want old deleted with its log dir, run entry and session entry", res, err)
 	}
 	if exists(logs["old"]) || !exists(logs["young"]) {
 		t.Fatalf("log dirs after gc: old %v (want gone), young %v (want kept)", exists(logs["old"]), exists(logs["young"]))
+	}
+	for _, p := range own["old"] {
+		if exists(p) {
+			t.Fatalf("%s kept after its participant's gc", p)
+		}
+	}
+	for _, p := range append(own["young"], filepath.Join(dir, "piggery.db")) {
+		if !exists(p) {
+			t.Fatalf("%s deleted; only the entries of a deleted participant may go", p)
+		}
 	}
 	if strings.Join(res.ExpiredArchives, " ") != "stale.jsonl" || !exists(filepath.Join(ArchiveDir(dir), "fresh.jsonl")) ||
 		!exists(res.Teams[0].Archive) {

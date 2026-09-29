@@ -37,6 +37,9 @@ func TestHelperProcess(t *testing.T) {
 		b, _ := json.Marshal(v)
 		fmt.Println(string(b))
 	}
+	if strings.HasPrefix(mode, "omp") {
+		ompHelper(mode)
+	}
 	switch mode {
 	case "replay":
 		var leaked []string

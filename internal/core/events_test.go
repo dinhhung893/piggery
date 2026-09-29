@@ -36,7 +36,7 @@ func TestEventsAreMinimal(t *testing.T) {
 	for _, ev := range []string{core.PresenceAgentStart, core.PresenceTurnEnd, core.PresenceAgentSettled} {
 		must(f.e.Presence(ctx, worker, core.PresenceArgs{Event: ev}))
 	}
-	_, err = f.e.Send(ctx, f.lead, core.SendArgs{To: "w1", Body: "status?", ExpectsReply: true})
+	_, err = f.e.Send(ctx, f.lead, core.SendArgs{To: "w1", Body: "status?"})
 	must(err)
 	_, err = f.e.Inbox(ctx, worker, core.InboxArgs{Batch: batch(1)})
 	must(err)

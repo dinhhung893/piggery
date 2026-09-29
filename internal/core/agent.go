@@ -145,8 +145,7 @@ func (e *Engine) spawn(ctx context.Context, c Caller, a AgentArgs) (AgentResult,
 				"depth": depth + 1, "task_id": res.TaskID, "cwd": cwd}}); err != nil {
 			return err
 		}
-		seq, err := t.insertMessage(res.TaskID, "", p.team, p.id, res.ParticipantID, "", res.TaskID, "", true,
-			"", "", a.Task)
+		seq, err := t.insertMessage(res.TaskID, "", p.team, p.id, res.ParticipantID, "", "", OpAssign, "", a.Task)
 		res.TaskSeq = seq
 		return err
 	})
@@ -266,9 +265,8 @@ func (e *Engine) resumeWorker(ctx context.Context, find func(t *txn) (participan
 		if err := t.setState(&w, "requested", "resume"); err != nil {
 			return err
 		}
-		if task != "" { // as at spawn: a message from the caller that expects the worker's reply
-			if res.TaskSeq, err = t.insertMessage(res.TaskID, "", p.team, p.id, w.id, "", res.TaskID, "", true,
-				"", "", task); err != nil {
+		if task != "" { // as at spawn: a message from the caller to the worker
+			if res.TaskSeq, err = t.insertMessage(res.TaskID, "", p.team, p.id, w.id, "", "", OpAssign, "", task); err != nil {
 				return err
 			}
 		}
@@ -330,7 +328,7 @@ func (t *txn) gateRespawn(p, w participant, m manifest) (*Error, []string, error
 			continue
 		}
 		id := newID(t.now)
-		if _, err := t.insertMessage(id, "", w.team, AddrEngine, to, "", id, "", false, "", "", reason+"."); err != nil {
+		if _, err := t.insertMessage(id, "", w.team, AddrEngine, to, "", "", "", "", reason+"."); err != nil {
 			return nil, nil, err
 		}
 		if to == AddrNotify {

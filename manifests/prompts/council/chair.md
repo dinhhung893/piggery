@@ -45,3 +45,5 @@ Give it to the Human, in the Human's words:
 - the action to take, its boundaries, and how to check it;
 - the dissent and your answer to it;
 - its limits, including "single model family", and what would reopen it.
+
+For the rest of piggery (changing a worker's model, templates, shell commands), run `piggery skills`.

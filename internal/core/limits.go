@@ -7,32 +7,17 @@ import (
 	"fmt"
 )
 
-// Mail storm limits. Only limits declared in the manifest apply. A message over a limit is stored
+// Mail storm limit. Only a limit declared in the manifest applies. A message over it is stored
 // but held (held_reason policy_hold): not delivered, not woken for, never acked, until an admin
 // releases it. Engine mail never goes through Send, so it is exempt and never causes a notice.
 const (
-	RuleMaxHops       = "limits.max_hops"
 	RuleRatePerMinute = "limits.messages_per_participant_per_minute"
-	RuleThreadCap     = "limits.messages_per_thread"
 	heldPolicy        = "policy_hold"
 )
 
-// mailHold returns the first limit the new message breaks ("" = none) and the notice dedupe key:
-// rule + thread for hops and thread cap, rule + minute window for the rate.
-func (t *txn) mailHold(p participant, m manifest, thread, replyTo string) (rule, key string, err error) {
-	if max, ok := m.Limits["max_hops"]; ok && replyTo != "" {
-		hops := 0
-		for cur := replyTo; cur != "" && hops <= max; hops++ { // bounded walk up the reply chain
-			var parent sql.NullString
-			if err := t.QueryRowContext(t.ctx, `SELECT reply_to FROM messages WHERE id=?`, cur).Scan(&parent); err != nil {
-				return "", "", internal(err)
-			}
-			cur = parent.String
-		}
-		if hops > max {
-			return RuleMaxHops, RuleMaxHops + "/" + thread, nil
-		}
-	}
+// mailHold returns the limit the new message breaks ("" = none) and the notice dedupe key: the
+// rule and the minute window.
+func (t *txn) mailHold(p participant, m manifest) (rule, key string, err error) {
 	if limit, ok := m.Limits["messages_per_participant_per_minute"]; ok {
 		var n int
 		if err := t.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM messages WHERE from_id=? AND created_at>? AND cc_of IS NULL`,
@@ -41,15 +26,6 @@ func (t *txn) mailHold(p participant, m manifest, thread, replyTo string) (rule,
 		}
 		if n >= limit {
 			return RuleRatePerMinute, fmt.Sprintf("%s/%d", RuleRatePerMinute, t.now/60_000), nil
-		}
-	}
-	if limit, ok := m.Limits["messages_per_thread"]; ok {
-		var n int
-		if err := t.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM messages WHERE thread_id=? AND cc_of IS NULL`, thread).Scan(&n); err != nil {
-			return "", "", internal(err)
-		}
-		if n >= limit {
-			return RuleThreadCap, RuleThreadCap + "/" + thread, nil
 		}
 	}
 	return "", "", nil
@@ -75,9 +51,9 @@ func (t *txn) hold(p participant, msgID, to, rule, key string) (bool, error) {
 	}
 	notice := newID(t.now)
 	body := fmt.Sprintf("Your message %s is held by %s and was not delivered. Further messages over this limit "+
-		"are held without another notice. Slow down or start a new thread; an admin can release it with "+
+		"are held without another notice. Slow down; an admin can release it with "+
 		"`piggery --admin release %s`.", msgID, rule, msgID)
-	if _, err := t.insertMessage(notice, "", p.team, AddrEngine, p.id, "", notice, "", false, "", "", body); err != nil {
+	if _, err := t.insertMessage(notice, "", p.team, AddrEngine, p.id, "", "", "", "", body); err != nil {
 		return false, err
 	}
 	return true, t.event(evt{typ: "notice", participant: p.id, team: p.team, ref: notice,

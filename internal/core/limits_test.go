@@ -1,6 +1,8 @@
 package core_test
 
 import (
+	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 )
 
 type limitFixture struct {
+	db         *sql.DB
 	e          *core.Engine
 	alice, bob core.Caller
 	now        *time.Time
@@ -39,7 +42,7 @@ func newLimitFixture(t *testing.T, limits string) limitFixture {
 		c, _ := e.Authenticate(ctx, j.ID, j.Token)
 		return c
 	}
-	return limitFixture{e: e, alice: join("alice"), bob: join("bob"), now: &now, notified: &notified}
+	return limitFixture{db: db, e: e, alice: join("alice"), bob: join("bob"), now: &now, notified: &notified}
 }
 
 func (f limitFixture) send(t *testing.T, from core.Caller, to, replyTo string) core.SendResult {
@@ -91,17 +94,6 @@ func (f limitFixture) heldTwice(t *testing.T, sender, recipient core.Caller, rul
 	}
 }
 
-func TestMaxHopsHolds(t *testing.T) {
-	f := newLimitFixture(t, "{max_hops: 2}")
-	m1 := f.send(t, f.alice, "bob", "")
-	m2 := f.send(t, f.bob, "alice", m1.ID)
-	m3 := f.send(t, f.alice, "bob", m2.ID) // chain of 2: allowed
-	if m3.Held {
-		t.Fatalf("hop 2 held: %+v", m3)
-	}
-	f.heldTwice(t, f.bob, f.alice, core.RuleMaxHops, func() core.SendResult { return f.send(t, f.bob, "alice", m3.ID) })
-}
-
 func TestRatePerMinuteHolds(t *testing.T) {
 	f := newLimitFixture(t, "{messages_per_participant_per_minute: 2}")
 	f.send(t, f.alice, "bob", "")
@@ -110,16 +102,6 @@ func TestRatePerMinuteHolds(t *testing.T) {
 	*f.now = f.now.Add(61 * time.Second)
 	if r := f.send(t, f.alice, "bob", ""); r.Held {
 		t.Fatalf("next minute still held: %+v", r)
-	}
-}
-
-func TestThreadCapHolds(t *testing.T) {
-	f := newLimitFixture(t, "{messages_per_thread: 2}")
-	m1 := f.send(t, f.alice, "bob", "")
-	m2 := f.send(t, f.bob, "alice", m1.ID)
-	f.heldTwice(t, f.alice, f.bob, core.RuleThreadCap, func() core.SendResult { return f.send(t, f.alice, "bob", m2.ID) })
-	if r := f.send(t, f.alice, "bob", ""); r.Held { // a new thread is fine
-		t.Fatalf("new thread held: %+v", r)
 	}
 }
 
@@ -164,5 +146,28 @@ func TestReleaseDeliversAndEngineIsExempt(t *testing.T) {
 	mine, _ := f.e.Inbox(ctx, f.alice, core.InboxArgs{})
 	if len(mine) != 1 { // the one rate notice, nothing for the timers
 		t.Fatalf("alice notices = %+v", mine)
+	}
+}
+
+// A removed limit (max_hops, messages_per_thread) set to a number is refused when a team is
+// brought up, saying so; set to none it reads as left out. A team brought up before, whose stored
+// manifest still has both, keeps working: the manifest is re-read on every verb.
+func TestRemovedLimitsRefusedAtEntryOnly(t *testing.T) {
+	f := newLimitFixture(t, "{messages_per_participant_per_minute: 30}")
+	man := func(limits string) string {
+		return "model: lim\nroles: {peer: {tools: [send, inbox, who]}}\nrouting:\n  - {from: peer, to: peer, allow: true}\nlimits: " + limits + "\n"
+	}
+	if _, err := f.e.TeamUp(ctx, core.TeamUpArgs{Manifest: man("{max_hops: 20}"), Cwd: t.TempDir()}); code(err) != core.CodeInvalid ||
+		!strings.Contains(err.Error(), "was removed") {
+		t.Fatalf("team up with max_hops: 20: %v; want refused as removed", err)
+	}
+	if _, err := f.e.TeamUp(ctx, core.TeamUpArgs{Name: "other", Manifest: man("{messages_per_thread: none, max_hops: none}"), Cwd: t.TempDir()}); err != nil {
+		t.Fatalf("team up with both none: %v", err)
+	}
+	if _, err := f.db.Exec(`UPDATE teams SET manifest=?`, man("{max_hops: 20, messages_per_thread: none}")); err != nil {
+		t.Fatal(err)
+	}
+	if r := f.send(t, f.alice, "bob", ""); r.Held {
+		t.Fatalf("a team stored with the removed limits: %+v", r)
 	}
 }

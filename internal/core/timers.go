@@ -89,7 +89,7 @@ func (e *Engine) FireDue(ctx context.Context) (int, error) {
 				return internal(err)
 			}
 			id := newID(t.now)
-			if _, err := t.insertMessage(id, "", team, AddrEngine, tm.Target, "", id, "", false, "", "", tm.Body); err != nil {
+			if _, err := t.insertMessage(id, "", team, AddrEngine, tm.Target, "", "", "", "", tm.Body); err != nil {
 				return err
 			}
 			if tm.EveryMs > 0 {

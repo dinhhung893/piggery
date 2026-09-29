@@ -63,7 +63,7 @@ func (t *txn) whyGate(p participant, m manifest, a SendArgs, caller string) (Why
 	var v WhyVerdict
 	tr := &gateTrace{}
 	tr.add("caller", "pass", "", caller)
-	g, err := t.sendGate(p, m, a, newID(t.now), tr)
+	g, err := t.sendGate(p, m, a, tr)
 	var d *denial
 	switch {
 	case errors.As(err, &d):

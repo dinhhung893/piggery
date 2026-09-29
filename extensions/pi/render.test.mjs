@@ -5,11 +5,11 @@ import { afterRetire, render, renderWho } from "./render.mjs";
 
 test("a mail header shows #N and names, the local send time, and an age only when late", () => {
 	const now = new Date(2026, 8, 27, 14, 30, 0).getTime();
-	const m = { id: "01M…", seq: 1042, from: "01P…", from_name: "a1", from_label: "a1 (your peer)", thread_id: "01T…", thread_seq: 1037, body: "x" };
+	const m = { id: "01M…", seq: 1042, from: "01P…", from_name: "a1", from_label: "a1 (your peer)", body: "x" };
 	const fresh = { ...m, reply_to: "01R…", reply_to_seq: 1040, created_at: now - 30_000 };
 	const late = { ...m, cc_of: "01O…", cc_of_seq: 1041, cc_to: "b1 (your peer)", created_at: new Date(2026, 8, 26, 23, 58).getTime() };
 	const [a, b] = render([fresh, late], undefined, now).split("\n\n").slice(1, 3);
-	assert.match(a, /^<message id="#1042" from="a1 \(your peer\)" sender="a1" thread="#1037" reply_to="#1040" at="14:29:30">/);
+	assert.match(a, /^<message id="#1042" from="a1 \(your peer\)" sender="a1" reply_to="#1040" at="14:29:30">/);
 	assert.match(b, /cc_of="#1041" cc_of_mail_to="b1 \(your peer\)" at="2026-09-26 23:58" age="14h32m">/);
 	assert.doesNotMatch(a + b, /01[A-Z]…/);
 });

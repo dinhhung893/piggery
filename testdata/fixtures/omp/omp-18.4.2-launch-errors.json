@@ -1,0 +1,38 @@
+[
+ {
+  "argv": [
+   "omp",
+   "--mode",
+   "rpc",
+   "--session-id",
+   "<uuid>",
+   "--model",
+   "example/glm-5.3-flash"
+  ],
+  "note": "pi's worker flag",
+  "ready_frame": false,
+  "stderr": "Error: unknown flag: --session-id\nRun `omp --help` for available flags.\n"
+ },
+ {
+  "argv": [
+   "omp",
+   "--mode",
+   "rpc",
+   "--model",
+   "example/no-such-model"
+  ],
+  "ready_frame": false,
+  "stderr": "Model \"example/no-such-model\" not found\n\nSet an API key environment variable: ...\n\nOr create /tmp/omp/home/.omp/agent/models.yml\n"
+ },
+ {
+  "argv": [
+   "omp",
+   "--mode",
+   "rpc",
+   "--resume",
+   "ffffffff-0000-0000-0000-000000000000"
+  ],
+  "ready_frame": false,
+  "stderr": "Error: Session \"ffffffff-0000-0000-0000-000000000000\" not found.\nRun `omp --resume` without an argument to pick from recent sessions, or `omp` to start a new one.\n"
+ }
+]

@@ -17,11 +17,12 @@ func (e *Engine) Send(ctx context.Context, c Caller, a SendArgs) (SendResult, er
 	return e.send(ctx, c, a)
 }
 
-// messageRef turns "#N" (a message's global seq: what models and humans see) into the message id; anything
-// else is returned as is. An unknown #N is not_found naming it.
+// messageRef turns "#N" (a message's global seq: what models and humans see) into the message id;
+// a bare N is the same (models drop the "#"; an id is never all digits). Anything else is returned
+// as is. An unknown #N is not_found naming it.
 func (t *txn) messageRef(ref string) (string, error) {
 	n, ok := strings.CutPrefix(ref, "#")
-	if !ok {
+	if !ok && (ref == "" || strings.Trim(ref, "0123456789") != "") {
 		return ref, nil
 	}
 	seq, err := strconv.ParseInt(n, 10, 64)
@@ -57,10 +58,8 @@ func (e *Engine) send(ctx context.Context, c Caller, a SendArgs) (SendResult, er
 		}
 		if a.ClientMsgID != "" {
 			var held sql.NullString
-			err := t.QueryRowContext(t.ctx, `SELECT id, seq, thread_id,
-				COALESCE((SELECT o.seq FROM messages o WHERE o.id = m.thread_id),0), held_reason
-				FROM messages m WHERE from_id=? AND client_msg_id=?`,
-				p.id, a.ClientMsgID).Scan(&res.ID, &res.Seq, &res.ThreadID, &res.ThreadSeq, &held)
+			err := t.QueryRowContext(t.ctx, `SELECT id, seq, held_reason FROM messages
+				WHERE from_id=? AND client_msg_id=?`, p.id, a.ClientMsgID).Scan(&res.ID, &res.Seq, &held)
 			if err == nil {
 				res.Duplicate, res.Held = true, held.Valid
 				if held.Valid {
@@ -81,22 +80,16 @@ func (e *Engine) send(ctx context.Context, c Caller, a SendArgs) (SendResult, er
 			return err
 		}
 		res.ID = newID(t.now)
-		g, err := t.sendGate(p, m, a, res.ID, nil)
+		g, err := t.sendGate(p, m, a, nil)
 		if err != nil {
 			return err
 		}
-		res.ThreadID, res.RuleID, recipient = g.thread, g.rule, g.recipient
-		if res.Seq, err = t.insertMessage(res.ID, a.ClientMsgID, p.team, p.id, g.toID, a.Kind, res.ThreadID,
-			a.ReplyTo, a.ExpectsReply, a.Op, a.Target, a.Body); err != nil {
+		res.RuleID, recipient = g.rule, g.recipient
+		if res.Seq, err = t.insertMessage(res.ID, a.ClientMsgID, p.team, p.id, g.toID, a.Kind,
+			a.ReplyTo, a.Op, a.Target, a.Body); err != nil {
 			return err
 		}
-		res.ThreadSeq = res.Seq // a new thread; else the thread's first message
-		if res.ThreadID != res.ID {
-			if err := t.QueryRowContext(t.ctx, `SELECT seq FROM messages WHERE id=?`, res.ThreadID).Scan(&res.ThreadSeq); err != nil {
-				return internal(err)
-			}
-		}
-		if ccTo, err = t.writeCCCopies(p, g.cc, res.ID, res.ThreadID, a.Kind, a.Body, res.RuleID != ""); err != nil {
+		if ccTo, err = t.writeCCCopies(p, g.cc, res.ID, a.Kind, a.Body, res.RuleID != ""); err != nil {
 			return err
 		}
 		if g.noGate {
@@ -136,7 +129,6 @@ func (e *Engine) send(ctx context.Context, c Caller, a SendArgs) (SendResult, er
 // gatePlan is what the send gate decided for one message.
 type gatePlan struct {
 	toID, recipient string // recipient: participant to wake ("" for notify/board)
-	thread          string
 	rule, key       string // limit that holds it ("" = none) and its notice dedupe key
 	cc              []participant
 	crossTeam       bool // to another team's gate: no routing, no cc
@@ -153,11 +145,10 @@ func (tr *gateTrace) add(check, result, rule, detail string) {
 }
 
 // sendGate is the gate of a send by p (token/run already checked): the role's grant of send,
-// target and visibility, routing, reply_to, mail limits and routing cc. msgID is the new
-// message's id (the thread of a new conversation). It writes nothing except through the
-// returned denial. Send and Why both call it, so `why` reports the decision Send would make.
-func (t *txn) sendGate(p participant, m manifest, a SendArgs, msgID string, tr *gateTrace) (gatePlan, error) {
-	g := gatePlan{thread: msgID}
+// target and visibility, routing, reply_to, mail limits and routing cc. It writes nothing except
+// through the returned denial. Send and Why both call it, so `why` reports the decision Send would make.
+func (t *txn) sendGate(p participant, m manifest, a SendArgs, tr *gateTrace) (gatePlan, error) {
+	var g gatePlan
 	if err := m.granted(p, "send", "send"); err != nil {
 		return g, err
 	}
@@ -171,8 +162,11 @@ func (t *txn) sendGate(p participant, m manifest, a SendArgs, msgID string, tr *
 		tr.add("board", "pass", "can_pin", "role "+p.role+" can pin; target/board limit ok")
 		g.toID = AddrBoard
 	default:
-		if a.Op != "" || a.Target != "" {
-			return g, errf(CodeInvalid, "op/target are only valid for board")
+		if a.Target != "" || (a.Op != "" && a.Op != OpAssign) {
+			return g, errf(CodeInvalid, "target and op replace/remove are only valid for board; op assign for a member")
+		}
+		if a.Op == OpAssign && a.To == AddrNotify {
+			return g, errf(CodeInvalid, "op assign is for a member of your team, not notify")
 		}
 		if a.Body == "" {
 			return g, errf(CodeInvalid, "body is required")
@@ -184,6 +178,13 @@ func (t *txn) sendGate(p participant, m manifest, a SendArgs, msgID string, tr *
 				return g, err
 			}
 			g.toID, toRole, g.recipient = q.id, q.role, q.id
+			if other != nil && a.Op == OpAssign {
+				return g, errf(CodeInvalid, "op assign is for a member of your team")
+			}
+			if a.Op == OpAssign && q.reportsTo != p.id {
+				return g, deny(&p, "send", "permission", "assign.not_reports_to", "only the member's reports_to can assign it a task", nil,
+					map[string]any{"to": a.To})
+			}
 			if other != nil {
 				// Another team: gate to gate only; neither team's routing nor cc applies.
 				if err := t.gateCrossTeam(p, q, *other, a); err != nil {
@@ -210,8 +211,8 @@ func (t *txn) sendGate(p participant, m manifest, a SendArgs, msgID string, tr *
 		// Mail from or to the caller is in view whatever its team (cross-team mail keeps the
 		// sender's team); a pin only on the caller's own board.
 		var team string
-		err := t.QueryRowContext(t.ctx, `SELECT thread_id, from_id, to_id, COALESCE(team_id,'') FROM messages WHERE id=?`,
-			a.ReplyTo).Scan(&g.thread, &fromID, &parentTo, &team)
+		err := t.QueryRowContext(t.ctx, `SELECT from_id, to_id, COALESCE(team_id,'') FROM messages WHERE id=?`,
+			a.ReplyTo).Scan(&fromID, &parentTo, &team)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && fromID != p.id && parentTo != p.id && (parentTo != AddrBoard || team != p.team)) {
 			return g, deny(&p, "send", "visibility", "reply_to.not_in_view", "reply_to is not in the caller's view", nil,
 				map[string]any{"reply_to": a.ReplyTo})
@@ -219,14 +220,14 @@ func (t *txn) sendGate(p participant, m manifest, a SendArgs, msgID string, tr *
 		if err != nil {
 			return g, internal(err)
 		}
-		tr.add("reply_to", "pass", "", "in view, thread "+g.thread)
+		tr.add("reply_to", "pass", "", "in view")
 	}
 	if a.To == AddrBoard {
 		return g, nil // board pins are exempt from mail limits (the board has its own) and cc
 	}
 	// Limits are checked before the insert (counts exclude this message).
 	var err error
-	if g.rule, g.key, err = t.mailHold(p, m, g.thread, a.ReplyTo); err != nil {
+	if g.rule, g.key, err = t.mailHold(p, m); err != nil {
 		return g, err
 	}
 	if g.rule != "" {
@@ -251,8 +252,7 @@ func (t *txn) sendGate(p participant, m manifest, a SendArgs, msgID string, tr *
 }
 
 // insertMessage writes a message with the next daemon-assigned seq.
-func (t *txn) insertMessage(id, clientMsgID, team, from, to, kind, thread, replyTo string, expectsReply bool,
-	op, target, body string) (int64, error) {
+func (t *txn) insertMessage(id, clientMsgID, team, from, to, kind, replyTo, op, target, body string) (int64, error) {
 	var seq int64
 	if err := t.QueryRowContext(t.ctx, `SELECT COALESCE(MAX(seq),0)+1 FROM messages`).Scan(&seq); err != nil {
 		return 0, internal(err)
@@ -264,10 +264,10 @@ func (t *txn) insertMessage(id, clientMsgID, team, from, to, kind, thread, reply
 		acked = t.now
 	}
 	_, err := t.ExecContext(t.ctx, `INSERT INTO messages
-		(id, seq, client_msg_id, team_id, from_id, to_id, kind, thread_id, reply_to, expects_reply, op, target, body, created_at, acked_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, seq, nullStr(clientMsgID), nullStr(team), from, to, nullStr(kind), thread, nullStr(replyTo),
-		expectsReply, nullStr(op), nullStr(target), body, t.now, acked)
+		(id, seq, client_msg_id, team_id, from_id, to_id, kind, reply_to, op, target, body, created_at, acked_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, seq, nullStr(clientMsgID), nullStr(team), from, to, nullStr(kind), nullStr(replyTo),
+		nullStr(op), nullStr(target), body, t.now, acked)
 	return seq, internal(err)
 }
 
@@ -531,10 +531,9 @@ func (e *Engine) Who(ctx context.Context, c Caller) ([]Presence, error) {
 // readMessages returns messages matching where (ordered by seq) with sender labels for reader.
 func (t *txn) readMessages(reader participant, where string, args ...any) ([]Message, error) {
 	// where uses unqualified columns of messages; the cc original is read by a subquery.
-	rows, err := t.QueryContext(t.ctx, `SELECT id, seq, from_id, to_id, COALESCE(kind,''), thread_id,
-		COALESCE(reply_to,''), expects_reply, COALESCE(op,''), COALESCE(target,''), body, created_at,
+	rows, err := t.QueryContext(t.ctx, `SELECT id, seq, from_id, to_id, COALESCE(kind,''),
+		COALESCE(reply_to,''), COALESCE(op,''), COALESCE(target,''), body, created_at,
 		COALESCE(cc_of,''), COALESCE((SELECT o.to_id FROM messages o WHERE o.id = messages.cc_of),''),
-		COALESCE((SELECT o.seq FROM messages o WHERE o.id = messages.thread_id),0),
 		COALESCE((SELECT o.seq FROM messages o WHERE o.id = messages.reply_to),0),
 		COALESCE((SELECT o.seq FROM messages o WHERE o.id = messages.cc_of),0)
 		FROM messages WHERE `+where+` ORDER BY seq`, args...)
@@ -544,8 +543,8 @@ func (t *txn) readMessages(reader participant, where string, args ...any) ([]Mes
 	var msgs []Message
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.ID, &m.Seq, &m.From, &m.To, &m.Kind, &m.ThreadID, &m.ReplyTo, &m.ExpectsReply,
-			&m.Op, &m.Target, &m.Body, &m.CreatedAt, &m.CcOf, &m.CcTo, &m.ThreadSeq, &m.ReplyToSeq, &m.CcOfSeq); err != nil {
+		if err := rows.Scan(&m.ID, &m.Seq, &m.From, &m.To, &m.Kind, &m.ReplyTo,
+			&m.Op, &m.Target, &m.Body, &m.CreatedAt, &m.CcOf, &m.CcTo, &m.ReplyToSeq, &m.CcOfSeq); err != nil {
 			rows.Close()
 			return nil, internal(err)
 		}

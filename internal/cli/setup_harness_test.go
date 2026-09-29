@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/sting8k/piggery/internal/driver/local"
 )
 
@@ -256,5 +258,119 @@ func TestSetupPiInstallRemove(t *testing.T) {
 	os.WriteFile(filepath.Join(copyDir, "index.ts"), []byte("// mine"), 0o600)
 	if _, err := installPi(dir, "", "v1.3.0"); err == nil || !strings.Contains(err.Error(), "not piggery's") {
 		t.Fatalf("over a directory not piggery's: %v", err)
+	}
+}
+
+// setup omp: the binary's copy goes into omp's agent dir (PI_CODING_AGENT_DIR, else ~/.omp/agent), a
+// second run changes nothing, a copy from another version is a problem for doctor and updated by
+// a newer binary, remove takes it out, and a directory that is not piggery's is never replaced.
+func TestSetupOmpInstallRemove(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("PI_CONFIG_DIR", "")
+	t.Setenv("PATH", t.TempDir())
+	dir := filepath.Join(home, ".piggery")
+	copyDir := filepath.Join(home, ".omp", "agent", "extensions", "piggery")
+	if local.OmpExtDir(dir) != copyDir {
+		t.Fatalf("ext dir %s, want %s", local.OmpExtDir(dir), copyDir)
+	}
+	if st := ompStatus(dir, "/self", "v1.2.0"); st.Installed || len(st.Problems) != 0 {
+		t.Fatalf("before setup: %+v", st)
+	}
+	if msg, err := installOmp(dir, "v1.2.0"); err != nil || !strings.Contains(msg, "installed") {
+		t.Fatalf("install: %q, %v", msg, err)
+	}
+	if v, ok := local.OmpExtVersion(copyDir); !ok || v != "v1.2.0" {
+		t.Fatalf("copy %q %v", v, ok)
+	}
+	if msg, _ := installOmp(dir, "v1.2.0"); !strings.Contains(msg, "already") {
+		t.Fatalf("second install: %q", msg)
+	}
+	if st := ompStatus(dir, "/self", "v1.3.0"); !st.Installed || !strings.Contains(st.Problems[0].Text, "not this piggery's") {
+		t.Fatalf("status for a newer binary: %+v", st)
+	}
+	if st := ompStatus(dir, "/self", "v1.2.0"); len(st.Problems) != 1 || !strings.Contains(st.Problems[0].Text, "not on PATH") {
+		t.Fatalf("status of a current copy with no piggery on PATH: %+v", st) // the extension starts the daemon with it
+	}
+	if up, _ := local.UpdateOmpExt(copyDir, "v1.3.0"); !up {
+		t.Fatal("a newer binary did not update the copy")
+	}
+	if _, err := removeOmp(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(copyDir); err == nil {
+		t.Fatal("remove kept the copy")
+	}
+	if msg, _ := removeOmp(dir); !strings.Contains(msg, "not installed") {
+		t.Fatalf("second remove: %q", msg)
+	}
+	os.MkdirAll(copyDir, 0o700)
+	os.WriteFile(filepath.Join(copyDir, "index.ts"), []byte("// mine"), 0o600)
+	if _, err := installOmp(dir, "v1.3.0"); err == nil || !strings.Contains(err.Error(), "not piggery's") {
+		t.Fatalf("over a directory not piggery's: %v", err)
+	}
+	if st := ompStatus(dir, "/self", "v1.3.0"); st.Installed || len(st.Problems) != 1 || !strings.Contains(st.Problems[0].Text, "not piggery's") {
+		t.Fatalf("status of a directory not piggery's: %+v", st)
+	}
+}
+
+// setup dsh: the plugin copy goes under ~/.piggery/plugins/dsh and one managed block, whose row names
+// the directory for the session records, into dsh's home patch,
+// after the user's own rows, which stay; a second run changes nothing, remove takes out the block
+// and the copy and leaves the user's rows as they were, a home patch that is not a list is refused
+// untouched, and status says when the row is missing.
+func TestSetupDshInstallRemove(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("DSH_HOME", "")
+	t.Setenv("PATH", t.TempDir())
+	dir := filepath.Join(home, ".piggery")
+	patch := filepath.Join(home, ".dsh", "cordis.patch.yml")
+	mine := "# mine\n- id: ui-skin\n  disabled: true\n"
+	os.MkdirAll(filepath.Dir(patch), 0o700)
+	os.WriteFile(patch, []byte(mine), 0o644)
+	if msg, err := installDsh(dir, "v1.2.0"); err != nil || !strings.Contains(msg, "installed") {
+		t.Fatalf("install: %q, %v", msg, err)
+	}
+	got, _ := os.ReadFile(patch)
+	var rows []map[string]any
+	if err := yaml.Unmarshal(got, &rows); err != nil || len(rows) != 2 || !strings.HasPrefix(string(got), mine) ||
+		!strings.Contains(string(got), local.DshEntry(dir)) || !strings.Contains(string(got), "sessions: '"+local.DshSessionsDir(dir)+"'") {
+		t.Fatalf("home patch after install: %v\n%s", err, got)
+	}
+	if st, _ := os.Stat(patch); st.Mode().Perm() != 0o644 {
+		t.Fatalf("mode %v: the user's file mode changed", st.Mode())
+	}
+	if msg, _ := installDsh(dir, "v1.2.0"); !strings.Contains(msg, "already") {
+		t.Fatalf("second install: %q", msg)
+	}
+	if st := dshStatus(dir, "/self", "v1.2.0"); !st.Installed || len(st.Problems) != 1 || !strings.Contains(st.Problems[0].Text, "not on PATH") {
+		t.Fatalf("status of a full install: %+v", st)
+	}
+	os.WriteFile(patch, []byte(mine), 0o644)
+	if st := dshStatus(dir, "/self", "v1.2.0"); !strings.Contains(st.Problems[0].Text, "no row") {
+		t.Fatalf("status without the row: %+v", st)
+	}
+	installDsh(dir, "v1.2.0")
+	if _, err := removeDsh(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(patch); string(got) != mine {
+		t.Fatalf("home patch after remove: %q, want the user's rows as they were", got)
+	}
+	if _, err := os.Stat(local.DshExtDir(dir)); err == nil {
+		t.Fatal("remove kept the copy")
+	}
+	if msg, _ := removeDsh(dir); !strings.Contains(msg, "not installed") {
+		t.Fatalf("second remove: %q", msg)
+	}
+	os.WriteFile(patch, []byte("a: 1\n"), 0o600)
+	if _, err := installDsh(dir, "v1.2.0"); err == nil {
+		t.Fatal("a home patch that is not a list was rewritten")
+	} else if got, _ := os.ReadFile(patch); string(got) != "a: 1\n" {
+		t.Fatalf("refused, but the file is now %q", got)
+	} else if _, err := os.Stat(local.DshExtDir(dir)); err == nil {
+		t.Fatal("refused, but the copy was installed")
 	}
 }

@@ -39,16 +39,15 @@ func startServer(t *testing.T) string {
 		}
 		os.RemoveAll(dir)
 	})
-	for i := 0; ; i++ {
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		c, err := cli.Dial(dir, false)
 		if err == nil {
 			c.Close()
 			return dir
 		}
-		if i == 200 {
+		if time.Now().After(deadline) {
 			t.Fatalf("server did not come up: %v", err)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -204,7 +203,7 @@ func TestIdentifiedConnectionWakeAndGone(t *testing.T) {
 	}
 
 	raw.Close()
-	for i := 0; ; i++ {
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		var who []core.Presence
 		if _, err := a.CallInto(proto.VerbWho, nil, &who); err != nil {
 			t.Fatal(err)
@@ -212,10 +211,9 @@ func TestIdentifiedConnectionWakeAndGone(t *testing.T) {
 		if who[1].Name == "bob" && who[1].State == "gone" {
 			return
 		}
-		if i == 200 {
+		if time.Now().After(deadline) {
 			t.Fatalf("bob not gone after close: %+v", who)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -378,7 +376,7 @@ func TestSupersededConnectionIsStale(t *testing.T) {
 	}
 
 	cur.c.Close()
-	for i := 0; ; i++ {
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		var who []core.Presence
 		if _, err := a.CallInto(proto.VerbWho, nil, &who); err != nil {
 			t.Fatal(err)
@@ -386,10 +384,9 @@ func TestSupersededConnectionIsStale(t *testing.T) {
 		if who[1].Name == "bob" && who[1].State == "gone" {
 			return
 		}
-		if i == 200 {
+		if time.Now().After(deadline) {
 			t.Fatalf("bob not gone while only the superseded connection is open: %+v", who)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -433,15 +430,14 @@ func runServer(t *testing.T, dir string) (stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- server.Run(ctx, server.Config{Dir: dir}) }()
-	for i := 0; ; i++ {
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		if c, err := cli.Dial(dir, false); err == nil {
 			c.Close()
 			break
 		}
-		if i == 200 {
+		if time.Now().After(deadline) {
 			t.Fatal("server did not come up")
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	return func() {
 		cancel()

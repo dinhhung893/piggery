@@ -10,7 +10,7 @@ import (
 	"github.com/sting8k/piggery/internal/jsonobj"
 )
 
-// The worker profiles ~/.piggery/harness/{pi,claude,codex}.json: each harness's default profile
+// The worker profiles ~/.piggery/harness/{pi,claude,codex,omp}.json: each harness's default profile
 // below is what setup writes and what a missing key is filled with. Every field is written (no
 // omitempty), so the file shows every key the driver reads.
 
@@ -68,6 +68,8 @@ func DefaultProfiles(dir string) []struct {
 		{ProfilePath(dir), DefaultProfile(filepath.Join(PiExtDir(dir), "index.ts"))},
 		{ClaudeProfilePath(dir), DefaultClaudeProfile},
 		{CodexProfilePath(dir), DefaultCodexProfile},
+		{OmpProfilePath(dir), DefaultOmpProfile},
+		{DshProfilePath(dir), DefaultDshProfile},
 	}
 }
 

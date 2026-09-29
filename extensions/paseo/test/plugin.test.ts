@@ -36,6 +36,15 @@ test("farm keeps piggery's grouping and order, with top's facts per row", () => 
   assert.deepEqual([solo.role, solo.kind, solo.root, solo.logged], ["solo", "solo", "/home/dev/src/labs/shop", false]);
 });
 
+test("a team whose members are all gone starts folded, and unfolded again when one is back", () => {
+  const dead = farm(ps)[1].units[0];
+  assert.deepEqual([dead.open, dead.dead?.members], [false, 3]);
+  const [lead, ...rest] = ps.teams![0].members;
+  const back: Ps = { ...ps, teams: [{ ...ps.teams![0], members: [{ ...lead, state: "idle" }, ...rest] }] };
+  const live = farm(back)[1].units[0];
+  assert.deepEqual([live.open, live.dead], [true, undefined]);
+});
+
 test("farm for a workspace keeps the projects at, inside or around its directory", () => {
   assert.deepEqual(farm(ps, "/home/dev/src/labs/api").map((p) => p.title), ["labs/api"]);
   assert.deepEqual(farm(ps, "/home/dev/src/labs/api/web").map((p) => p.title), ["labs/api"]);

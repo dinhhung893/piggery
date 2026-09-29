@@ -264,9 +264,8 @@ func (e *env) send(args []string) error {
 	var a core.SendArgs
 	fs.StringVar(&a.Kind, "kind", "", "opaque kind")
 	fs.StringVar(&a.ReplyTo, "reply-to", "", "the #N (or id) of the message answered")
-	fs.BoolVar(&a.ExpectsReply, "expects-reply", false, "sender expects a reply")
 	fs.StringVar(&a.ClientMsgID, "client-msg-id", "", "idempotency key")
-	fs.StringVar(&a.Op, "op", "", "board: replace|remove")
+	fs.StringVar(&a.Op, "op", "", "assign (a task for a member that reports to you) | board: replace|remove")
 	fs.StringVar(&a.Target, "target", "", "board: pin id")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -287,7 +286,7 @@ func (e *env) send(args []string) error {
 		if r.Held {
 			dup += fmt.Sprintf(" HELD by %s (not delivered; an admin can `piggery release #%d`)", r.RuleID, r.Seq)
 		}
-		fmt.Fprintf(w, "sent #%d (thread #%d)%s\n", r.Seq, r.ThreadSeq, dup)
+		fmt.Fprintf(w, "sent #%d%s\n", r.Seq, dup)
 	})
 }
 
@@ -543,15 +542,12 @@ func (e *env) agent(args []string) error {
 
 func header(m core.Message) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "#%d from=%q thread=#%d", m.Seq, m.FromLabel, m.ThreadSeq)
+	fmt.Fprintf(&b, "#%d from=%q", m.Seq, m.FromLabel)
 	if m.Kind != "" {
 		fmt.Fprintf(&b, " kind=%s", m.Kind)
 	}
 	if m.ReplyTo != "" {
 		fmt.Fprintf(&b, " reply_to=#%d", m.ReplyToSeq)
-	}
-	if m.ExpectsReply {
-		b.WriteString(" expects_reply")
 	}
 	fmt.Fprintf(&b, " at=%s", clock(m.CreatedAt))
 	return b.String()
@@ -639,7 +635,7 @@ func (e *env) teamDown(args []string) error {
 
 func (e *env) gc(args []string) error {
 	fs := e.flags("gc")
-	before := fs.Duration("closed-before", 0, "teams closed longer ago than this (e.g. 168h)")
+	before := fs.Duration("closed-before", 0, "teams closed, and solo sessions gone, longer ago than this (e.g. 168h)")
 	dry := fs.Bool("dry-run", false, "print the counts, write and delete nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -652,10 +648,10 @@ func (e *env) gc(args []string) error {
 	}
 	return do(e, proto.VerbGC, core.GCArgs{ClosedBeforeMs: before.Milliseconds(), DryRun: *dry},
 		func(w io.Writer, r core.GCResult) {
-			if len(r.Teams) == 0 {
-				fmt.Fprintln(w, "no closed team is old enough")
+			if len(r.Teams)+len(r.Solos) == 0 {
+				fmt.Fprintln(w, "no closed team or gone solo session is old enough")
 			}
-			for _, g := range r.Teams {
+			for _, g := range append(r.Teams, r.Solos...) {
 				state := "dry run"
 				switch {
 				case g.Skipped != "":
@@ -663,12 +659,16 @@ func (e *env) gc(args []string) error {
 				case g.Deleted:
 					state = "archived and deleted -> " + g.Archive
 				}
-				fmt.Fprintf(w, "team %s name=%s closed=%s %s\n", g.TeamID, g.Name, clock(g.ClosedAt), state)
+				if g.ParticipantID != "" {
+					fmt.Fprintf(w, "solo %s name=%s gone=%s %s\n", g.ParticipantID, g.Name, clock(g.ClosedAt), state)
+				} else {
+					fmt.Fprintf(w, "team %s name=%s closed=%s %s\n", g.TeamID, g.Name, clock(g.ClosedAt), state)
+				}
 				if g.Counts != nil {
 					fmt.Fprintf(w, "  %s\n", fmtCounts(g.Counts))
 				}
 				if g.LogDirs > 0 {
-					fmt.Fprintf(w, "  run logs deleted: %d dirs, %s\n", g.LogDirs, tokens(int(g.LogBytes))+"B")
+					fmt.Fprintf(w, "  run logs, scratch and session data deleted: %d entries, %s\n", g.LogDirs, tokens(int(g.LogBytes))+"B")
 				}
 			}
 			if n := len(r.ExpiredArchives); n > 0 {

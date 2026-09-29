@@ -86,7 +86,7 @@ type topModel struct {
 
 const (
 	tabClosed    = "\x00closed" // not a team id
-	closedRow    = "\x00team:"  // + team id: the selectable line of a closed team
+	closedRow    = "\x00team:"  // + team id: the selectable line of a team listed as one line
 	closedRecent = time.Hour    // All shows teams closed this recently
 	sideOverview = 0
 	sideTail     = 1
@@ -405,7 +405,11 @@ type topTab struct {
 func (m *topModel) tabs() []topTab {
 	all := topTab{label: "All", count: len(m.ps.Solos)}
 	for _, t := range m.ps.Teams {
-		all.count += len(t.Members)
+		if dead(t) {
+			all.count++ // one line
+		} else {
+			all.count += len(t.Members)
+		}
 	}
 	now := time.Now()
 	for _, c := range m.ps.Closed {
@@ -424,6 +428,23 @@ func (m *topModel) tabs() []topTab {
 		return out[:1]
 	}
 	return out
+}
+
+// dead: an open team whose members are all gone. All lists it as one line, like a closed team;
+// its own tab lists its members.
+func dead(t core.TeamState) bool {
+	for _, mem := range t.Members {
+		if mem.State != "gone" {
+			return false
+		}
+	}
+	return len(t.Members) > 0
+}
+
+// oneLine reports whether the current tab lists u as one line (closedRow + its team id), its
+// members only when expanded (m.open): a closed team, or in All a dead open team.
+func (m *topModel) oneLine(u unit) bool {
+	return u.closed != nil || u.team != nil && m.tab == "" && dead(*u.team)
 }
 
 // recent reports whether c closed within closedRecent of now (All lists it).
@@ -486,8 +507,8 @@ func (m *topModel) groups() []dirGroup {
 }
 
 // items are the selectable ids of the current tab, in display order (list): per directory and
-// unit, a team's members as its tree, a closed team's line (then its members when expanded),
-// a solo.
+// unit, a team's members as its tree, the line of a closed or dead team (then its members when
+// expanded), a solo.
 func (m *topModel) items() []string {
 	var ids []string
 	for _, g := range m.groups() {
@@ -495,10 +516,10 @@ func (m *topModel) items() []string {
 			switch {
 			case u.solo != nil:
 				ids = append(ids, u.solo.ID)
-			case u.closed != nil:
-				ids = append(ids, closedRow+u.closed.ID)
-				if m.open[u.closed.ID] {
-					for _, r := range memberTree(u.closed.Members) {
+			case m.oneLine(u):
+				ids = append(ids, closedRow+u.team.ID)
+				if m.open[u.team.ID] {
+					for _, r := range memberTree(u.team.Members) {
 						ids = append(ids, r.m.ID)
 					}
 				}

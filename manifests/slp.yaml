@@ -57,8 +57,6 @@ timers:
   - {on: lead, notify: reports_to, silent_for: 30m}
 limits:                  # none: no limit
   depth: 2                 # how deep spawned_by chains may go
-  concurrency: 5           # live workers at once
+  concurrency: 10           # live workers at once
   messages_per_participant_per_minute: 30
-  messages_per_thread: none
-  max_hops: 20             # replies in one reply_to chain
   max_respawn_per_hour: none

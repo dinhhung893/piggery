@@ -228,7 +228,7 @@ type AgentArgs struct {
 	Action string `json:"action"`
 	Role   string `json:"role,omitempty"`
 	Name   string `json:"name,omitempty"`
-	Task   string `json:"task,omitempty"` // spawn, resume: becomes a message from the caller to the worker (expects_reply)
+	Task   string `json:"task,omitempty"` // spawn, resume: becomes a message from the caller to the worker
 	// Cwd is spawn's directory for the worker, relative to the spawner's cwd or absolute; ""
 	// inherits the spawner's. Another than the spawner's needs can_set_cwd and the bounds.
 	Cwd string `json:"cwd,omitempty"`

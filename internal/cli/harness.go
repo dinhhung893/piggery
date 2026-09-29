@@ -1,6 +1,10 @@
 package cli
 
-import "github.com/sting8k/piggery/internal/core"
+import (
+	"context"
+
+	"github.com/sting8k/piggery/internal/core"
+)
 
 // harnessProfile is everything the adapter layer knows about one harness: setup, hook, piggery mcp
 // and doctor read it from harnesses and never branch on a harness name. A new harness is one file
@@ -23,12 +27,14 @@ type harnessProfile struct {
 
 // setupTarget is one place `piggery setup` adds piggery to: a harness, or a host that only shows
 // piggery (Paseo). install, remove and status: `piggery setup <name>`, `setup remove <name>`,
-// `setup` alone; cmd is the command it needs on PATH.
+// `setup` alone; cmd is the command it needs on PATH, and version (nil: local.HarnessVersion, which
+// reads x.y.z) how to read its version, for one whose versions have a suffix (dsh 0.2.0-rc.1).
 type setupTarget struct {
 	name, cmd string
 	install   func(o setupOpts) (string, error)
 	remove    func(o setupOpts) (string, error)
 	status    func(o setupOpts) harnessState
+	version   func(ctx context.Context, cmd string) (string, error)
 }
 
 // setupOpts: dir is piggery's (~/.piggery), self this executable, ext --ext (a checkout's pi
@@ -36,10 +42,10 @@ type setupTarget struct {
 type setupOpts struct{ dir, self, ext, paseoHome string }
 
 // harnesses is the registry, in the order setup reports them.
-var harnesses = []harnessProfile{piHarness, claudeHarness, codexHarness}
+var harnesses = []harnessProfile{piHarness, claudeHarness, codexHarness, ompHarness, dshHarness}
 
 // setupTargets are the harnesses and the other places setup installs to, in the order it reports them.
-var setupTargets = []setupTarget{piHarness.setupTarget, claudeHarness.setupTarget, codexHarness.setupTarget, paseoTarget}
+var setupTargets = []setupTarget{piHarness.setupTarget, claudeHarness.setupTarget, codexHarness.setupTarget, ompHarness.setupTarget, dshHarness.setupTarget, paseoTarget}
 
 // targetNamed is the setup target called name.
 func targetNamed(name string) (setupTarget, bool) {

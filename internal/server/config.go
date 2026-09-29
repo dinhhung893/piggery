@@ -316,11 +316,10 @@ func parseRetention(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// gcPlace is where gc archives, and where each participant's run logs are (the local driver's).
+// gcPlace is where gc archives, and what it removes with a participant: its entries in logs/, run/
+// and sessions/ (the local driver's layout), by its id, nothing else in the directory.
 func gcPlace(dir string) core.GCPlace {
-	return core.GCPlace{ArchiveDir: ArchiveDir(dir), RunLogs: func(id string) string {
-		return filepath.Dir(local.LogPath(dir, id, "run"))
-	}}
+	return core.GCPlace{ArchiveDir: ArchiveDir(dir), Own: func(key string) []string { return local.OwnPaths(dir, key) }}
 }
 
 // runGC is one automatic run: gc of teams closed longer than GCClosedAfter (with their run
@@ -347,12 +346,16 @@ func (s *server) autoGC(ctx context.Context) {
 		if err != nil {
 			s.log.Error("auto gc", "err", err)
 		}
-		for _, g := range res.Teams {
+		for _, g := range append(res.Teams, res.Solos...) {
+			what := "team"
+			if g.ParticipantID != "" {
+				what = "solo"
+			}
 			switch {
 			case g.Deleted:
-				s.log.Info("auto gc", "team", g.Name, "archive", g.Archive, "log_dirs", g.LogDirs, "log_bytes", g.LogBytes)
+				s.log.Info("auto gc", what, g.Name, "archive", g.Archive, "log_dirs", g.LogDirs, "log_bytes", g.LogBytes)
 			case g.Skipped != "":
-				s.log.Warn("auto gc skipped", "team", g.Name, "why", g.Skipped)
+				s.log.Warn("auto gc skipped", what, g.Name, "why", g.Skipped)
 			}
 		}
 		if len(res.ExpiredArchives) > 0 {

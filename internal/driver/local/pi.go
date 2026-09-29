@@ -55,22 +55,44 @@ func (c piCodec) defaults() (string, string) {
 }
 
 func (c piCodec) profile() (Profile, error) {
+	return readProfile(ProfilePath(c.dir), fmt.Sprintf("no worker profile at %s (see harness/pi.example.json)", ProfilePath(c.dir)))
+}
+
+// readProfile reads the worker profile at path (pi's and omp's share Profile); missing is the
+// error when there is no file.
+func readProfile(path, missing string) (Profile, error) {
 	var p Profile
-	b, err := os.ReadFile(ProfilePath(c.dir))
+	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return p, fmt.Errorf("no worker profile at %s (see harness/pi.example.json)", ProfilePath(c.dir))
+		return p, errors.New(missing)
 	}
 	if err != nil {
 		return p, err
 	}
 	if err := json.Unmarshal(b, &p); err != nil {
-		return p, fmt.Errorf("worker profile %s: %w", ProfilePath(c.dir), err)
+		return p, fmt.Errorf("worker profile %s: %w", path, err)
 	}
 	if p.Cmd == "" {
-		return p, fmt.Errorf("worker profile %s: cmd is required", ProfilePath(c.dir))
+		return p, fmt.Errorf("worker profile %s: cmd is required", path)
 	}
 	inheritEmpty(&p.Model, &p.Thinking)
 	return p, nil
+}
+
+// workerArgs are a profile's args for a worker and the -e/--extension paths among them:
+// --no-extensions (profiles written before the agent dir) would drop the human's whole setup, so
+// it is not passed; the -e extensions (piggery) are loaded as given and skipped in the setup.
+func workerArgs(profArgs []string) (args, skip []string) {
+	for i, a := range profArgs {
+		if a == "--no-extensions" {
+			continue
+		}
+		if i > 0 && (profArgs[i-1] == "-e" || profArgs[i-1] == "--extension") {
+			skip = append(skip, a)
+		}
+		args = append(args, a)
+	}
+	return args, skip
 }
 
 func (c piCodec) launch(s core.Spec) (launch, error) {
@@ -79,18 +101,7 @@ func (c piCodec) launch(s core.Spec) (launch, error) {
 		return launch{}, err
 	}
 	// The worker loads the human's pi setup minus the blacklist, through its own agent dir.
-	// --no-extensions (profiles written before that) would drop it all, so it is not passed;
-	// the -e extensions (piggery) are loaded as given and skipped in the setup.
-	var args, skip []string
-	for i, a := range prof.Args {
-		if a == "--no-extensions" {
-			continue
-		}
-		if i > 0 && (prof.Args[i-1] == "-e" || prof.Args[i-1] == "--extension") {
-			skip = append(skip, a)
-		}
-		args = append(args, a)
-	}
+	args, skip := workerArgs(prof.Args)
 	agentDir, err := c.newAgentDir(s, prof.Blacklist, skip)
 	if err != nil {
 		return launch{}, fmt.Errorf("worker agent dir: %w", err)
@@ -116,7 +127,13 @@ func (c piCodec) launch(s core.Spec) (launch, error) {
 // first: core starts a run only once the previous one has ended (spawn, or resume of a gone
 // or verified-dead worker), and a daemon restart can leave them behind.
 func (c piCodec) newAgentDir(s core.Spec, blacklist, skip []string) (string, error) {
-	parent := filepath.Join(AgentDirRoot(c.dir), s.ParticipantID)
+	return newRunAgentDir(AgentDirRoot(c.dir), HumanAgentDir(AgentDirRoot(c.dir)), piSettings, s, blacklist, skip)
+}
+
+// newRunAgentDir builds run s's agent dir under root/<participant>/<run> from the human's dir
+// src, removing the participant's earlier ones.
+func newRunAgentDir(root, src string, settings []settingsFile, s core.Spec, blacklist, skip []string) (string, error) {
+	parent := filepath.Join(root, s.ParticipantID)
 	old, err := os.ReadDir(parent)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
@@ -130,7 +147,7 @@ func (c piCodec) newAgentDir(s core.Spec, blacklist, skip []string) (string, err
 	home, _ := os.UserHomeDir()
 	// -e paths resolve against the worker's cwd, as pi resolves them.
 	bl := newBlacklist(blacklist, skip, home, s.Cwd)
-	if err := buildAgentDir(HumanAgentDir(AgentDirRoot(c.dir)), dir, home, bl); err != nil {
+	if err := buildAgentDirWith(src, dir, home, bl, settings); err != nil {
 		os.RemoveAll(dir)
 		return "", err
 	}
@@ -152,13 +169,17 @@ var piSkip = map[string]bool{"message_update": true, "tool_execution_update": tr
 // Extension UI methods that block pi until answered (rpc-extension-ui.md "Dialog methods").
 var piDialog = map[string]bool{"select": true, "confirm": true, "input": true, "editor": true}
 
-func (piCodec) record(_ *worker, line []byte) record {
+func (piCodec) record(_ *worker, line []byte) record { return piRecord(line, piSkip) }
+
+// piRecord is what the runner does with a line of a pi-style rpc: keep it unless its type is in
+// skip, hand a response to the request waiting for its id, cancel a blocking dialog.
+func piRecord(line []byte, skip map[string]bool) record {
 	var rec struct {
 		Type   string `json:"type"`
 		ID     string `json:"id"`
 		Method string `json:"method"`
 	}
-	if json.Unmarshal(line, &rec) != nil || piSkip[rec.Type] {
+	if json.Unmarshal(line, &rec) != nil || skip[rec.Type] {
 		return record{} // not a protocol record, or a streaming delta
 	}
 	r := record{keep: true}
@@ -207,7 +228,7 @@ func (piCodec) setModel(ctx context.Context, w *worker, model string) error {
 // setThinking sets the thinking level (rpc set_thinking_level), then checks that pi runs it:
 // pi accepts levels it does not keep, so the check is get_state. On a mismatch
 // the level it ran before is set again, so a refused change leaves the worker as it was (seen
-// live: pi took "bogus" and moved the worker from max to minimal).
+// live: pi took "bogus" and moved the worker from max to minimal; omp clamps too).
 func (piCodec) setThinking(ctx context.Context, w *worker, level string) error {
 	before, err := w.thinking(ctx, commandTimeout)
 	if err != nil {
@@ -221,34 +242,52 @@ func (piCodec) setThinking(ctx context.Context, w *worker, level string) error {
 		return err
 	}
 	if _, err := w.call(ctx, commandTimeout, map[string]string{"type": "set_thinking_level", "level": before}); err != nil {
-		return fmt.Errorf("thinking level: pi ran %q, not %q; setting %q back failed: %w", ran, level, before, err)
+		return fmt.Errorf("thinking level: %s ran %q, not %q; setting %q back failed: %w", w.harness, ran, level, before, err)
 	}
 	if back, err := w.thinking(ctx, commandTimeout); err != nil || back != before {
-		return fmt.Errorf("thinking level: pi ran %q, not %q; it now runs %q, not %q as before", ran, level, back, before)
+		return fmt.Errorf("thinking level: %s ran %q, not %q; it now runs %q, not %q as before", w.harness, ran, level, back, before)
 	}
-	return fmt.Errorf("thinking level: pi ran %q, not %q (%q kept)", ran, level, before)
+	return fmt.Errorf("thinking level: %s ran %q, not %q (%q kept)", w.harness, ran, level, before)
 }
 
 // checkThinking fails unless pi runs the thinking level want.
 func (w *worker) checkThinking(ctx context.Context, timeout time.Duration, want string) error {
 	ran, err := w.thinking(ctx, timeout)
-	if err == nil && ran != want {
-		err = fmt.Errorf("thinking level: pi ran %q, not %q", ran, want)
+	if err == nil {
+		err = w.thinkingIs(ran, want)
 	}
 	return err
 }
 
+// thinkingIs is the error when the harness ran the level ran, not want (nil when equal).
+func (w *worker) thinkingIs(ran, want string) error {
+	if ran != want {
+		return fmt.Errorf("thinking level: %s ran %q, not %q", w.harness, ran, want)
+	}
+	return nil
+}
+
 // thinking is the thinking level pi runs now (rpc get_state).
 func (w *worker) thinking(ctx context.Context, timeout time.Duration) (string, error) {
+	st, err := w.state(ctx, timeout)
+	return st.ThinkingLevel, err
+}
+
+// piState is the part of pi's (and omp's) get_state the driver reads.
+type piState struct {
+	ThinkingLevel string `json:"thinkingLevel"`
+	SessionID     string `json:"sessionId"` // omp; pi's is the one it was started with
+}
+
+// state is the worker's get_state.
+func (w *worker) state(ctx context.Context, timeout time.Duration) (piState, error) {
+	var st piState
 	r, err := w.call(ctx, timeout, map[string]string{"type": "get_state"})
 	if err != nil {
-		return "", err
-	}
-	var st struct {
-		ThinkingLevel string `json:"thinkingLevel"`
+		return st, err
 	}
 	json.Unmarshal(r.Data, &st)
-	return st.ThinkingLevel, nil
+	return st, nil
 }
 
 // call sends one pi rpc command with an id and waits for pi's response to it; a refusal is an
@@ -264,7 +303,7 @@ func (w *worker) call(ctx context.Context, timeout time.Duration, cmd map[string
 	var r rpcResponse
 	json.Unmarshal(line, &r)
 	if !r.Success {
-		return r, fmt.Errorf("pi refused %s: %s", typ, r.Error)
+		return r, fmt.Errorf("%s refused %s: %s", w.harness, typ, r.Error)
 	}
 	return r, nil
 }

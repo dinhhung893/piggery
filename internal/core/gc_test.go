@@ -212,8 +212,8 @@ func TestGCSkipsChangedOrReferencedTeams(t *testing.T) {
 	}
 	*f.now = f.now.Add(time.Hour)
 	// b replies across teams to a's message (only possible by hand): a must be skipped.
-	if _, err := f.db.Exec(`INSERT INTO messages(id, seq, team_id, from_id, to_id, thread_id, reply_to, body, created_at)
-		VALUES ('x', 999, ?, 'someone', 'else', 'x', ?, 'cross', 1)`, f.teams["b"], m.ID); err != nil {
+	if _, err := f.db.Exec(`INSERT INTO messages(id, seq, team_id, from_id, to_id, reply_to, body, created_at)
+		VALUES ('x', 999, ?, 'someone', 'else', ?, 'cross', 1)`, f.teams["b"], m.ID); err != nil {
 		t.Fatal(err)
 	}
 	defer core.SetGCAfterSnapshot(func() { // b gains a row after its snapshot
@@ -224,7 +224,7 @@ func TestGCSkipsChangedOrReferencedTeams(t *testing.T) {
 	if err != nil || len(res.Teams) != 2 {
 		t.Fatalf("gc: %+v %v", res, err)
 	}
-	want := map[string]string{"a": "referenced by other teams", "b": "team changed since the archive"}
+	want := map[string]string{"a": "referenced by others", "b": "changed since the archive"}
 	for _, g := range res.Teams {
 		if g.Deleted || !strings.HasPrefix(g.Skipped, want[g.Name]) {
 			t.Fatalf("team %s: %+v", g.Name, g)
@@ -232,5 +232,130 @@ func TestGCSkipsChangedOrReferencedTeams(t *testing.T) {
 	}
 	if n := f.count(t, `SELECT COUNT(*) FROM teams`); n != 2 {
 		t.Fatalf("teams left: %d", n)
+	}
+}
+
+// gc removes what the daemon names for each participant of a deleted team, by id, and nothing
+// else: the daemon's other files stay, and a session id a live participant still reports is not a
+// key (nor is one that is no single path element).
+func TestGCRemovesTheEntriesOfDeletedParticipantsOnly(t *testing.T) {
+	f := newGCFixture(t, "a", "b")
+	own := t.TempDir()
+	write := func(path string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lead, lead2 := f.who["a"]["lead"].ParticipantID, f.who["a"]["lead2"].ParticipantID
+	write(filepath.Join(own, lead, "run1", "log"))
+	write(filepath.Join(own, lead2))
+	write(filepath.Join(own, "piggery.db"))
+	write(filepath.Join(own, "shared"))
+	// lead's session ids: one a participant of the open team b still reports, one that would climb out.
+	for ref, id := range map[string]string{"shared": lead, "..": lead2} {
+		if _, err := f.db.Exec(`UPDATE participants SET session_ref=? WHERE id=?`, ref, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.db.Exec(`UPDATE participants SET harness_ref='shared' WHERE id=?`, f.who["b"]["lead"].ParticipantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.e.TeamDown(ctx, core.TeamDownArgs{Team: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	*f.now = f.now.Add(time.Hour)
+	var keys []string
+	place := core.GCPlace{ArchiveDir: f.dir, Own: func(k string) []string { keys = append(keys, k); return []string{filepath.Join(own, k)} }}
+	res, err := f.e.GC(ctx, place, core.GCArgs{})
+	if err != nil || len(res.Teams) != 1 || !res.Teams[0].Deleted || res.Teams[0].LogDirs != 2 {
+		t.Fatalf("gc: %+v %v", res, err)
+	}
+	for _, k := range keys {
+		if k != lead && k != lead2 {
+			t.Fatalf("the daemon was asked about %q; only the ids of the deleted participants are keys", k)
+		}
+	}
+	for _, gone := range []string{filepath.Join(own, lead), filepath.Join(own, lead2)} {
+		if _, err := os.Lstat(gone); err == nil {
+			t.Fatalf("%s kept", gone)
+		}
+	}
+	for _, kept := range []string{"piggery.db", "shared"} {
+		if _, err := os.Lstat(filepath.Join(own, kept)); err != nil {
+			t.Fatalf("%s: %v", kept, err)
+		}
+	}
+}
+
+// A solo session gone longer than the retention is archived and deleted like a closed team, with its
+// entries; one gone more recently, and a live one, stay. The session that comes back joins as a new solo.
+func TestGCDropsAGoneSolo(t *testing.T) {
+	f := newGCFixture(t)
+	root := t.TempDir()
+	join := func(ref string) core.Caller {
+		t.Helper()
+		j, err := f.e.JoinAuto(ctx, core.JoinAutoArgs{Cwd: root, Harness: "pi", Mode: "rpc", HarnessRef: ref})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := f.e.Authenticate(ctx, j.ID, j.Token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	end := func(c core.Caller) {
+		t.Helper()
+		if err := f.e.Presence(ctx, c, core.PresenceArgs{Event: core.PresenceShutdown}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old, recent, live := join("old-1"), join("recent-1"), join("live-1")
+	end(old)
+	*f.now = f.now.Add(2 * time.Hour)
+	end(recent)
+	*f.now = f.now.Add(time.Minute)
+
+	own := t.TempDir()
+	for _, id := range []string{old.ParticipantID, recent.ParticipantID} {
+		if err := os.MkdirAll(filepath.Join(own, id), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	place := core.GCPlace{ArchiveDir: f.dir, Own: func(k string) []string { return []string{filepath.Join(own, k)} }}
+	res, err := f.e.GC(ctx, place, core.GCArgs{ClosedBeforeMs: time.Hour.Milliseconds()})
+	if err != nil || len(res.Teams) != 0 || len(res.Solos) != 1 {
+		t.Fatalf("gc: %+v %v", res, err)
+	}
+	g := res.Solos[0]
+	if g.ParticipantID != old.ParticipantID || !g.Deleted || g.LogDirs != 1 || g.Counts["participants"] != 1 {
+		t.Fatalf("solo: %+v", g)
+	}
+	if lines, err := core.ReadArchive(g.Archive); err != nil || len(lines) == 0 {
+		t.Fatalf("archive: %v %v", lines, err)
+	}
+	if n := f.count(t, `SELECT COUNT(*) FROM participants WHERE id=?`, old.ParticipantID); n != 0 {
+		t.Fatal("the solo's row is still there")
+	}
+	if n := f.count(t, `SELECT COUNT(*) FROM participants WHERE id IN (?,?)`, recent.ParticipantID, live.ParticipantID); n != 2 {
+		t.Fatalf("participants left: %d, want the recent and the live solo", n)
+	}
+	if _, err := os.Stat(filepath.Join(own, old.ParticipantID)); err == nil {
+		t.Fatal("the dropped solo's entry is kept")
+	}
+	if _, err := os.Stat(filepath.Join(own, recent.ParticipantID)); err != nil {
+		t.Fatal("a solo that is not old enough lost its entry")
+	}
+	if n := f.count(t, `SELECT COUNT(*) FROM events WHERE type='gc' AND ref_id=?`, old.ParticipantID); n != 1 {
+		t.Fatalf("gc events: %d", n)
+	}
+
+	j, err := f.e.JoinAuto(ctx, core.JoinAutoArgs{Cwd: root, Harness: "pi", Mode: "rpc", HarnessRef: "old-1"})
+	if err != nil || j.ID == old.ParticipantID || j.TeamID != "" {
+		t.Fatalf("the dropped session coming back: %+v %v; want a new solo", j, err)
 	}
 }

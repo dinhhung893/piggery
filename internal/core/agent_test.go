@@ -288,7 +288,7 @@ func TestResumeWithTaskGivesTheTask(t *testing.T) {
 			task = &d[i]
 		}
 	}
-	if err != nil || task == nil || task.Seq != r.TaskSeq || task.Body != "second" || !task.ExpectsReply {
+	if err != nil || task == nil || task.Seq != r.TaskSeq || task.Body != "second" {
 		t.Fatalf("worker inbox = %+v, %v; want the unacked task #%d", d, err, r.TaskSeq)
 	}
 }
@@ -327,7 +327,7 @@ func TestSpawnStartFailureKeepsTaskForResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, err := f.e.Inbox(ctx, w, core.InboxArgs{})
-	if err != nil || len(d) != 1 || d[0].ID != spawned.TaskID || !d[0].ExpectsReply || d[0].FromLabel != "lead (your lead)" {
+	if err != nil || len(d) != 1 || d[0].ID != spawned.TaskID || d[0].FromLabel != "lead (your lead)" {
 		t.Fatalf("worker inbox = %+v, %v", d, err)
 	}
 	// The worker's extension identifies with the run it was started with (PIGGERY_RUN_ID): ready.
@@ -733,11 +733,35 @@ func TestAdminSetModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := f.rt.starts[0].ParticipantID
+	w1 := f.rt.starts[0]
+	wc, _ := f.e.Authenticate(ctx, w1.ParticipantID, w1.Token)
+	if _, err := f.e.Identify(ctx, wc, core.IdentifyArgs{RunID: w1.RunID, Harness: "pi", Model: "HP/start", Thinking: "low"}); err != nil {
+		t.Fatal(err)
+	}
+	// ps shows the session's report over the stored model: a live switch must replace it.
+	shown := func() (model, thinking string) {
+		st, err := f.e.State(ctx, core.StateArgs{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ts := range st.Teams {
+			for _, m := range ts.Members {
+				if m.Name == "w1" {
+					return m.Model, m.Thinking
+				}
+			}
+		}
+		t.Fatal("w1 not in ps")
+		return "", ""
+	}
 	set := func(model string) (core.ModelResult, error) {
 		return f.e.SetModel(ctx, core.ModelArgs{AdminTarget: core.AdminTarget{Target: "w1"}, Model: model})
 	}
 	if r, err := set("HP/a"); err != nil || !r.Live || !eq(f.rt.models, []string{id + "=HP/a"}) {
 		t.Fatalf("live set = %+v, %v; driver %v", r, err, f.rt.models)
+	}
+	if m, th := shown(); m != "HP/a" || th != "low" {
+		t.Fatalf("ps after a live set shows %q/%q; want HP/a, thinking kept low", m, th)
 	}
 	f.rt.modelErr = errors.New("Model not found")
 	if _, err := set("HP/bad"); err == nil || !strings.Contains(err.Error(), "Model not found") {
@@ -770,6 +794,9 @@ func TestAdminSetModel(t *testing.T) {
 	f.rt.models = nil
 	if r, err := think("high"); err != nil || !r.Live || !eq(f.rt.models, []string{id + "~high"}) {
 		t.Fatalf("live thinking = %+v, %v; driver %v", r, err, f.rt.models)
+	}
+	if _, th := shown(); th != "high" {
+		t.Fatalf("ps after a live thinking set shows %q; want high", th)
 	}
 	f.rt.thinkErr = errors.New(`thinking level: pi ran "high", not "bogus"`)
 	if _, err := think("bogus"); err == nil || !strings.Contains(err.Error(), "not \"bogus\"") {

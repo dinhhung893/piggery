@@ -25,6 +25,9 @@ const (
 	AddrEngine = "engine"
 )
 
+// OpAssign marks a mail as the recipient's current assignment (ps shows it).
+const OpAssign = "assign"
+
 // BoardLimit is the max number of live pins per team.
 const BoardLimit = 20
 
@@ -147,21 +150,18 @@ type Event struct {
 // ---- participant verbs ----
 
 type SendArgs struct {
-	To           string `json:"to"` // participant name/id in view, "notify", or "board"
-	Kind         string `json:"kind,omitempty"`
-	Body         string `json:"body"`
-	ReplyTo      string `json:"reply_to,omitempty"`
-	ExpectsReply bool   `json:"expects_reply,omitempty"`
-	Op           string `json:"op,omitempty"`     // board only: "" | replace | remove
-	Target       string `json:"target,omitempty"` // board only: live pin id for replace/remove
-	ClientMsgID  string `json:"client_msg_id,omitempty"`
+	To          string `json:"to"` // participant name/id in view, "notify", or "board"
+	Kind        string `json:"kind,omitempty"`
+	Body        string `json:"body"`
+	ReplyTo     string `json:"reply_to,omitempty"`
+	Op          string `json:"op,omitempty"`     // "" | assign (to a member that reports to the sender) | replace | remove (board)
+	Target      string `json:"target,omitempty"` // board only: live pin id for replace/remove
+	ClientMsgID string `json:"client_msg_id,omitempty"`
 }
 
 type SendResult struct {
 	ID        string `json:"id"`
-	Seq       int64  `json:"seq"`
-	ThreadID  string `json:"thread_id"`
-	ThreadSeq int64  `json:"thread_seq"`          // what models and humans see (#N)
+	Seq       int64  `json:"seq"`                 // what models and humans see (#N)
 	Duplicate bool   `json:"duplicate,omitempty"` // same (from, client_msg_id) seen: old id returned, nothing written
 	Held      bool   `json:"held,omitempty"`      // stored but held by a mail limit; not delivered until released
 	RuleID    string `json:"rule_id,omitempty"`   // the limit that held it
@@ -170,25 +170,22 @@ type SendResult struct {
 // Message is a stored message as seen by a reader. FromLabel is the engine-stamped header,
 // e.g. `alice (your peer)`.
 type Message struct {
-	ID           string `json:"id"`
-	Seq          int64  `json:"seq"`
-	From         string `json:"from"`
-	FromName     string `json:"from_name"` // the sender's name (an address; ids are not shown)
-	FromLabel    string `json:"from_label"`
-	To           string `json:"to"`
-	Kind         string `json:"kind,omitempty"`
-	ThreadID     string `json:"thread_id"`
-	ThreadSeq    int64  `json:"thread_seq"`
-	ReplyTo      string `json:"reply_to,omitempty"`
-	ReplyToSeq   int64  `json:"reply_to_seq,omitempty"`
-	ExpectsReply bool   `json:"expects_reply,omitempty"`
-	Op           string `json:"op,omitempty"`
-	Target       string `json:"target,omitempty"`
-	Body         string `json:"body"`
-	CreatedAt    int64  `json:"created_at"`
-	CcOf         string `json:"cc_of,omitempty"` // a routing cc copy of this message id
-	CcOfSeq      int64  `json:"cc_of_seq,omitempty"`
-	CcTo         string `json:"cc_to,omitempty"` // label of the original recipient, from the reader's view
+	ID         string `json:"id"`
+	Seq        int64  `json:"seq"`
+	From       string `json:"from"`
+	FromName   string `json:"from_name"` // the sender's name (an address; ids are not shown)
+	FromLabel  string `json:"from_label"`
+	To         string `json:"to"`
+	Kind       string `json:"kind,omitempty"`
+	ReplyTo    string `json:"reply_to,omitempty"`
+	ReplyToSeq int64  `json:"reply_to_seq,omitempty"`
+	Op         string `json:"op,omitempty"`
+	Target     string `json:"target,omitempty"`
+	Body       string `json:"body"`
+	CreatedAt  int64  `json:"created_at"`
+	CcOf       string `json:"cc_of,omitempty"` // a routing cc copy of this message id
+	CcOfSeq    int64  `json:"cc_of_seq,omitempty"`
+	CcTo       string `json:"cc_to,omitempty"` // label of the original recipient, from the reader's view
 }
 
 type InboxArgs struct {

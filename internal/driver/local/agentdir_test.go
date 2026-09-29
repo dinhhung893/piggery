@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func write(t *testing.T, p, s string) {
@@ -113,5 +115,94 @@ func TestHumanAgentDirIgnoresAGeneratedDir(t *testing.T) {
 	t.Setenv("PI_CODING_AGENT_DIR", "~/elsewhere")
 	if got := HumanAgentDir(root); got != filepath.Join(home, "elsewhere") {
 		t.Fatalf("source = %s", got)
+	}
+}
+
+// An omp worker's agent dir follows pi's (entries are symlinks, extensions/ a real dir of
+// symlinks to what is not blacklisted, nothing of the human's dir changes) with omp's settings:
+// config.yml (YAML) and the legacy settings.json are filtered copies; models.yml and agent.db
+// are the human's own.
+func TestBuildOmpAgentDir(t *testing.T) {
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	src := filepath.Join(home, ".omp", "agent")
+	repo := filepath.Join(home, "code", "piggery")
+	write(t, filepath.Join(repo, "extensions", "omp", "index.ts"), "")
+	write(t, filepath.Join(home, "wt", "omp", "package.json"), `{"name": "piggery-omp"}`)
+	write(t, filepath.Join(home, "wt", "omp", "index.ts"), "")
+	write(t, filepath.Join(src, "models.yml"), "providers: {}\n")
+	write(t, filepath.Join(src, "agent.db"), "")
+	write(t, filepath.Join(src, "extensions", "keep.ts"), "")
+	write(t, filepath.Join(src, "extensions", "a.ts"), "")
+	write(t, filepath.Join(src, "extensions", "piggery", "index.ts"), "") // setup omp's copy
+	yml := "theme: dark\nmcp:\n  enableProjectConfig: true\nextensions:\n  - rel/ext-x.ts\n  - " +
+		filepath.Join(home, "wt", "omp", "index.ts") + "\n  - " + filepath.Join(home, "tools", "a.ts") + "\n"
+	write(t, filepath.Join(src, "config.yml"), yml)
+	write(t, filepath.Join(src, "settings.json"), `{"extensions": ["rel/ext-y.ts", "`+filepath.Join(home, "tools", "a.ts")+`"]}`)
+	before, _ := os.ReadFile(filepath.Join(src, "config.yml"))
+
+	dst := filepath.Join(home, "gen", "r1")
+	bl := newBlacklist([]string{"a"}, nil, home, home)
+	if err := buildAgentDirWith(src, dst, home, bl, ompSettings); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"models.yml", "agent.db"} {
+		if target, err := os.Readlink(filepath.Join(dst, name)); err != nil || target != filepath.Join(src, name) {
+			t.Fatalf("%s -> %q, %v; want a symlink to the human's", name, target, err)
+		}
+	}
+	exts, _ := os.ReadDir(filepath.Join(dst, "extensions"))
+	var names []string
+	for _, e := range exts {
+		names = append(names, e.Name())
+	}
+	if !slices.Equal(names, []string{"keep.ts"}) {
+		t.Fatalf("extensions %v; want only keep.ts (a by name, piggery's copy skipped)", names)
+	}
+	var cfg struct {
+		Theme string
+		Mcp   struct {
+			EnableProjectConfig bool `yaml:"enableProjectConfig"`
+		}
+		Extensions []string
+	}
+	b, err := os.ReadFile(filepath.Join(dst, "config.yml"))
+	if err != nil || yaml.Unmarshal(b, &cfg) != nil || cfg.Theme != "dark" || !cfg.Mcp.EnableProjectConfig ||
+		!slices.Equal(cfg.Extensions, []string{filepath.Join(src, "rel", "ext-x.ts")}) {
+		t.Fatalf("config.yml %q (%v); want the human's keys, extensions without piggery's copy and a.ts, paths from src", b, err)
+	}
+	var legacy struct{ Extensions []string }
+	b, err = os.ReadFile(filepath.Join(dst, "settings.json"))
+	if err != nil || json.Unmarshal(b, &legacy) != nil || !slices.Equal(legacy.Extensions, []string{filepath.Join(src, "rel", "ext-y.ts")}) {
+		t.Fatalf("settings.json %q (%v)", b, err)
+	}
+	if after, _ := os.ReadFile(filepath.Join(src, "config.yml")); string(after) != string(before) {
+		t.Fatal("the human's config.yml changed")
+	}
+}
+
+// A worker started by a build that kept its omp sessions in harness/omp-sessions finds them, with
+// their session ids, in the new place; once the new place has sessions the old ones are left alone.
+func TestOmpSessionsAreFoundAfterTheMove(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "harness", "omp-sessions", "p1")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "s1.jsonl"), []byte("session"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	moveOmpSessions(dir, "p1")
+	if b, err := os.ReadFile(filepath.Join(OmpSessionsDir(dir, "p1"), "s1.jsonl")); err != nil || string(b) != "session" {
+		t.Fatalf("session after the move: %q, %v", b, err)
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Fatal("the old directory is still there")
+	}
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	moveOmpSessions(dir, "p1")
+	if _, err := os.Stat(old); err != nil {
+		t.Fatalf("a worker that has sessions in the new place had the old ones moved over them: %v", err)
 	}
 }

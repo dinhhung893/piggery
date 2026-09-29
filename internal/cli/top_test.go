@@ -190,6 +190,38 @@ func TestTopClosedTeamsExpand(t *testing.T) {
 	}
 }
 
+// An open team whose members are all gone is one line in All, collapsed until enter; its own
+// tab lists its members; when a member is back it is a normal team, no key needed.
+func TestTopDeadOpenTeamIsOneLine(t *testing.T) {
+	ps := func(d2 string) proto.PsResult {
+		return proto.PsResult{State: core.State{Teams: []core.TeamState{
+			{ID: "ta", Name: "a", Members: []core.MemberState{{ID: "a1", Name: "a1", State: "idle"}}},
+			{ID: "td", Name: "dead", Members: []core.MemberState{{ID: "d1", Name: "d1", State: "gone"}, {ID: "d2", Name: "d2", State: d2}}}}}}
+	}
+	m := newTopModel(nil, "")
+	m.Update(fetched{ps: ps("gone")})
+	if got, want := strings.Join(m.items(), " "), "a1 "+closedRow+"td"; got != want {
+		t.Fatalf("All lists %q; want the live member and the dead team as one line", got)
+	}
+	m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got, want := strings.Join(m.items(), " "), "a1 "+closedRow+"td d1 d2"; got != want {
+		t.Fatalf("after enter All lists %q; want the dead team's members too", got)
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	for m.tab != "td" {
+		m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	}
+	if got, want := strings.Join(m.items(), " "), "d1 d2"; got != want {
+		t.Fatalf("its own tab lists %q; want its members, no collapsed line", got)
+	}
+	m.tab = ""
+	m.Update(fetched{ps: ps("idle")})
+	if got, want := strings.Join(m.items(), " "), "a1 d1 d2"; got != want {
+		t.Fatalf("with d2 back All lists %q; want a normal team", got)
+	}
+}
+
 // On a narrow terminal the details start hidden; enter shows them instead of the list and esc
 // goes back to the list with the same member selected.
 func TestTopNarrowDetailsFullScreen(t *testing.T) {
@@ -255,5 +287,32 @@ func TestMemberTree(t *testing.T) {
 		"2 peer-b1<-lead-b", "0 orphan<-left-the-team"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("tree order:\n got %v\nwant %v", got, want)
+	}
+}
+
+// A member's task sits right under the header, before team/kind/model: its title on at most two
+// lines, who gave it, how its reply chain stands, and a newer unmarked mail as a "mail" row.
+func TestTopOverviewShowsTheAssignment(t *testing.T) {
+	now := time.UnixMilli(10_000_000)
+	ago := func(min int) int64 { return now.Add(-time.Duration(min) * time.Minute).UnixMilli() }
+	long := "omp phase 2, your part: the interactive side of the extension with a very long title that goes past two lines of the pane"
+	a := &core.Assignment{Seq: 175, Title: long, From: "summer-hamster", At: ago(22),
+		Latest: &core.ChainMail{Seq: 183, At: ago(3), ByMember: true}, Newer: &core.NewerMail{Seq: 190, Title: "next: the dsh part", At: ago(1)}}
+	m := newTopModel(nil, "")
+	m.Update(fetched{ps: proto.PsResult{State: core.State{Teams: []core.TeamState{{ID: "ta", Name: "a", Members: []core.MemberState{
+		{ID: "a1", Name: "a1", Role: "executor", State: "idle", Assignment: a}, {ID: "a2", Name: "a2", Role: "executor", State: "idle"}}}}}}})
+	strip := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	side := func(sel string) string {
+		m.sel = sel
+		return strip.ReplaceAllString(strings.Join(m.sidebar(50, 30, now), "\n"), "")
+	}
+	got := strings.Split(side("a1"), "\n")
+	if len(got) < 8 || !strings.HasPrefix(got[2], " task     #175 omp phase 2, your part:") || !strings.HasSuffix(got[3], "…") ||
+		got[4] != "          from summer-hamster · 22m ago" || got[5] != "          handed back #183 · 3m ago" ||
+		!strings.HasPrefix(got[6], " mail     #190 next: the dsh part · 1m ago") || !strings.HasPrefix(got[7], " team ") {
+		t.Fatalf("overview = %q; want the task rows (title over two lines, from, handed back, mail) before team", got)
+	}
+	if strings.Contains(side("a2"), "task") {
+		t.Fatal("a member without an assignment shows a task row")
 	}
 }

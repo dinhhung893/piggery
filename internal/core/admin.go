@@ -199,6 +199,14 @@ func (e *Engine) SetModel(ctx context.Context, a ModelArgs) (ModelResult, error)
 			thinking=COALESCE(NULLIF(?,''),thinking) WHERE id=?`, a.Model, a.Thinking, w.id); err != nil {
 			return internal(err)
 		}
+		// The harness switched: that is what the session runs now, whatever it last reported (pi
+		// reports a model or level it was told over rpc to no extension).
+		if res.Live {
+			if _, err := t.ExecContext(t.ctx, `UPDATE participants SET session_model=COALESCE(NULLIF(?,''),session_model),
+				session_thinking=COALESCE(NULLIF(?,''),session_thinking) WHERE id=?`, a.Model, a.Thinking, w.id); err != nil {
+				return internal(err)
+			}
+		}
 		payload := map[string]any{"live": res.Live}
 		if a.Model != "" {
 			payload["model"] = a.Model

@@ -129,7 +129,7 @@ func Run(ctx context.Context, cfg Config) error {
 	defer db.Close()
 
 	s := &server{adminToken: token, log: log, dir: cfg.Dir, settings: settings, startedAt: time.Now(), stop: stop, conns: map[*conn]struct{}{}, runs: map[string]string{}}
-	opts := local.Options{OnExit: func(participantID, runID string, e core.Exit) {
+	opts := local.Options{Version: cfg.Version, OnExit: func(participantID, runID string, e core.Exit) {
 		// Every worker exit is recorded: one that ends on its own, and the ones StopAll ends
 		// while the daemon shuts down (so not the request/daemon ctx). Idempotent after Stop.
 		if err := s.eng.ProcessExited(context.Background(), participantID, runID, e); err != nil {
@@ -170,6 +170,24 @@ func Run(ctx context.Context, cfg Config) error {
 			log.Warn("pi extension", "dir", ext, "err", err)
 		} else if updated {
 			log.Info("pi extension updated", "dir", ext, "version", cfg.Version)
+		}
+	}
+	// The omp extension `piggery setup omp` installed, the same way.
+	if cfg.Version != "" {
+		ext := local.OmpExtDir(cfg.Dir)
+		if updated, err := local.UpdateOmpExt(ext, cfg.Version); err != nil {
+			log.Warn("omp extension", "dir", ext, "err", err)
+		} else if updated {
+			log.Info("omp extension updated", "dir", ext, "version", cfg.Version)
+		}
+	}
+	// The dsh plugin `piggery setup dsh` installed, the same way.
+	if cfg.Version != "" {
+		ext := local.DshExtDir(cfg.Dir)
+		if updated, err := local.UpdateDshExt(ext, cfg.Version); err != nil {
+			log.Warn("dsh plugin", "dir", ext, "err", err)
+		} else if updated {
+			log.Info("dsh plugin updated", "dir", ext, "version", cfg.Version)
 		}
 	}
 	// A solo uses the limits of the built-in p2p template.

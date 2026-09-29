@@ -9,10 +9,9 @@
 export function render(msgs, heading, now = Date.now()) {
 	// No ULIDs for the model: messages are #seq, people are names.
 	const parts = msgs.map((m) => {
-		let attrs = `id="#${m.seq}" from="${m.from_label}" sender="${m.from_name}" thread="#${m.thread_seq}"`;
+		let attrs = `id="#${m.seq}" from="${m.from_label}" sender="${m.from_name}"`;
 		if (m.kind) attrs += ` kind="${m.kind}"`;
 		if (m.reply_to) attrs += ` reply_to="#${m.reply_to_seq}"`;
-		if (m.expects_reply) attrs += ` expects_reply="true"`;
 		if (m.cc_of) attrs += ` cc_of="#${m.cc_of_seq}" cc_of_mail_to="${m.cc_to}"`; // a routing cc copy
 		attrs += ` at="${sentAt(m.created_at, now)}"`;
 		if (now - m.created_at > 60_000) attrs += ` age="${age(now - m.created_at)}"`; // held, or shown again
@@ -45,7 +44,7 @@ function age(ms) {
 
 /** The model-facing result of a send (send tool and declarative tools alike). */
 export function sentText(r) {
-	const ref = `#${r.seq} (thread #${r.thread_seq})`;
+	const ref = `#${r.seq}`;
 	if (r.duplicate) return `duplicate of ${ref}`;
 	if (r.held) return `stored ${ref} but HELD by ${r.rule_id}: not delivered until an admin releases it`;
 	return `sent ${ref}`;

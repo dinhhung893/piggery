@@ -86,7 +86,7 @@ func TestInheritAndNone(t *testing.T) {
 	m, err := parseManifest(`model: x
 roles:
   r: {spawn: {harness: inherit, model: inherit, thinking: inherit}}
-limits: {depth: 2, max_hops: none}
+limits: {depth: 2, max_respawn_per_hour: none}
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -94,10 +94,10 @@ limits: {depth: 2, max_hops: none}
 	if s := m.Roles["r"].Spawn; s.Harness != "" || s.Model != "" || s.Thinking != "" {
 		t.Fatalf("spawn %+v; want inherit read as empty", s)
 	}
-	if _, ok := m.Limits["max_hops"]; ok || m.Limits["depth"] != 2 {
-		t.Fatalf("limits %v; want max_hops left out, depth kept", m.Limits)
+	if _, ok := m.Limits["max_respawn_per_hour"]; ok || m.Limits["depth"] != 2 {
+		t.Fatalf("limits %v; want max_respawn_per_hour left out, depth kept", m.Limits)
 	}
-	for _, bad := range []string{"limits: {max_hops: lots}", "limits: {max_hopz: none}"} {
+	for _, bad := range []string{"limits: {depth: lots}", "limits: {depthz: none}"} {
 		if _, err := parseManifest("model: x\nroles: {r: {}}\n" + bad); err == nil {
 			t.Fatalf("%s: accepted", bad)
 		}
@@ -161,7 +161,7 @@ func TestFillManifestFile(t *testing.T) {
 	if again, err := FillManifestFile(p); err != nil || len(again) != 0 {
 		t.Fatalf("second run: %v %v", again, err)
 	}
-	bad := "model: x\nroles: {r: {}}\nlimits: {max_hops: lots}\n"
+	bad := "model: x\nroles: {r: {}}\nlimits: {depth: lots}\n"
 	os.WriteFile(p, []byte(bad), 0o600)
 	if _, err := FillManifestFile(p); err == nil {
 		t.Fatal("a refused template was filled")
