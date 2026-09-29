@@ -7,8 +7,8 @@ when the job is actually done, not when the pig sniffed at it. Every pig also ha
 role says who it may talk to and whether it may have piglets (workers). The farm checks the
 fence itself, so no amount of sweet talk gets a pig through it.
 
-pi, Claude Code and Codex pigs all live on the same farm. The farm is one Go binary and a
-SQLite file, and nothing runs in the cloud.
+pi, Claude Code, Codex, omp and dsh pigs all live on the same farm and talk to each other. The
+farm is one Go binary and a SQLite file, and nothing runs in the cloud.
 
 ![piggery top: teams and workers grouped by project](assets/top.svg)
 
@@ -16,33 +16,42 @@ SQLite file, and nothing runs in the cloud.
 
 ```mermaid
 flowchart LR
-  subgraph pigs["your agents"]
-    pi[pi]
-    cc[Claude Code]
-    cx[Codex]
-  end
-  pigs --> farm(("🐖 piggery"))
-  farm --> layout{"pick a team layout"}
-  layout --> se["supervisor → executors"]
-  layout --> slp["supervisor → leads → peers"]
-  layout --> co["chair → council"]
-  layout --> p2p["peer ↔ peer"]
-  se & slp & co & p2p --> tasks[["tasks, plowed"]]
+  a["agent on pi"] <-->|mail| farm
+  b["agent on Claude Code"] <-->|mail| farm
+  c["agent on …"] <-->|mail| farm
+  farm(("🐖 piggery<br/>mailbox + gate")) --- shape[["a team layout:<br/>roles, who talks to whom,<br/>who starts workers"]]
 ```
 
-A layout is a small YAML file: the roles, who may talk to whom, and who may spawn whom.
-Pick a built-in one or write your own; piggery enforces it on every send and spawn.
+Every agent gets the same mailbox, whatever its harness: a pi session can mail a Claude Code
+session, and a worker's answer wakes whoever is waiting for it. Each mail and each spawn passes
+the gate, which checks it against the team's layout: a small YAML file you pick or write. A few
+come built in as examples (`supervisor-executor`, `slp`, `council`, `p2p`); any other shape is
+another file.
+
+## Harnesses
+
+| Harness | Your sessions | Workers piggery starts | Tested with | Add piggery |
+|---|---|---|---|---|
+| [pi](https://github.com/earendil-works/pi) | yes (extension) | yes (`pi --mode rpc`) | 0.87.1 | `piggery setup pi` |
+| [Claude Code](https://claude.com/product/claude-code) | yes (plugin + MCP) | yes (`claude -p`) | 2.1.283 | `piggery setup claude` |
+| [Codex](https://github.com/openai/codex) | yes (hooks + MCP) | yes (`codex app-server`) | 0.157.1 | `piggery setup codex` |
+| [omp](https://github.com/can1357/oh-my-pi) | yes (extension) | yes (`omp --mode rpc`) | 18.4.2 | `piggery setup omp` |
+| [dsh](https://github.com/deepseek-ai/deepseek-harness) | yes (`dsh web`, plugin) | yes (`dsh --profile sdk`) | 0.2.0-rc.1 | `piggery setup dsh` |
+
+A role's workers run on the harness its template names (`spawn.harness`), else on the one of the
+session that founded the team. `piggery setup` alone shows each harness's version and whether
+piggery is installed in it.
 
 ## Install
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sting8k/piggery/main/install.sh | sh
-piggery setup pi       # and/or: claude, codex
+piggery setup pi       # and/or: claude, codex, omp, dsh
 ```
 
 The script picks the build for your OS and CPU (Linux or macOS, amd64 or arm64), checks it against
 the release's `checksums.txt`, and installs it in `~/.local/bin` (`PIGGERY_INSTALL_DIR` to change it,
-`PIGGERY_VERSION=v0.2.0` for a given release). By hand: download `piggery-<os>-<arch>` (`darwin-arm64`,
+`PIGGERY_VERSION=v0.3.0` for a given release). By hand: download `piggery-<os>-<arch>` (`darwin-arm64`,
 `darwin-amd64`, `linux-amd64`, `linux-arm64`) from the
 [latest release](https://github.com/sting8k/piggery/releases/latest), `chmod +x` it and put it on
 your PATH.
@@ -56,7 +65,7 @@ Or build it: `go install github.com/sting8k/piggery/cmd/piggery@latest` (Go 1.26
 
 ## Quick start
 
-1. Open pi, Claude Code or Codex in your project.
+1. Open pi, Claude Code, Codex, omp or `dsh web` in your project.
 2. Ask it for a team: *"make a supervisor-executor team to fix the failing tests"*.
 3. Watch the farm: `piggery top`.
 
