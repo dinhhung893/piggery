@@ -29,7 +29,7 @@ func newLimitFixture(t *testing.T, limits string) limitFixture {
 	var notified []string
 	e := core.New(db, core.WithClock(func() time.Time { return now }),
 		core.WithNotify(func(id string) { notified = append(notified, id) }))
-	man := "model: lim\nroles: {peer: {can_pin: true, tools: [send, inbox, who, agent]}}\nrouting:\n  - {from: peer, to: peer, allow: true}\nlimits: " + limits + "\n"
+	man := "template: lim\nroles: {peer: {can_pin: true, tools: [send, inbox, who, agent]}}\nrouting:\n  - {from: peer, to: peer, allow: true}\nlimits: " + limits + "\n"
 	team, err := e.TeamUp(ctx, core.TeamUpArgs{Manifest: man, Cwd: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestReleaseDeliversAndEngineIsExempt(t *testing.T) {
 func TestRemovedLimitsRefusedAtEntryOnly(t *testing.T) {
 	f := newLimitFixture(t, "{messages_per_participant_per_minute: 30}")
 	man := func(limits string) string {
-		return "model: lim\nroles: {peer: {tools: [send, inbox, who]}}\nrouting:\n  - {from: peer, to: peer, allow: true}\nlimits: " + limits + "\n"
+		return "template: lim\nroles: {peer: {tools: [send, inbox, who]}}\nrouting:\n  - {from: peer, to: peer, allow: true}\nlimits: " + limits + "\n"
 	}
 	if _, err := f.e.TeamUp(ctx, core.TeamUpArgs{Manifest: man("{max_hops: 20}"), Cwd: t.TempDir()}); code(err) != core.CodeInvalid ||
 		!strings.Contains(err.Error(), "was removed") {

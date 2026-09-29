@@ -28,12 +28,12 @@ func TestLeave(t *testing.T) {
 	defer db.Close()
 	var sunk []string
 	// Template v: a boss can admit but has no send, so it is never the gate.
-	const v = "model: v\nauto_join_role: lead\nroles:\n" +
+	const v = "template: v\nauto_join_role: lead\nroles:\n" +
 		"  lead: {tools: [send, inbox, who, agent], can_spawn: [boss, peer]}\n" +
 		"  boss: {tools: [inbox, who, agent], can_spawn: [peer]}\n" +
 		"  peer: {tools: [send, inbox, who]}\nlimits: {depth: 2, concurrency: 2}\n"
 	// Template w: a lead and a dev it takes in.
-	const w = "model: w\nauto_join_role: lead\nroles:\n" +
+	const w = "template: w\nauto_join_role: lead\nroles:\n" +
 		"  lead: {tools: [send, inbox, who, agent], can_spawn: [dev]}\n" +
 		"  dev: {tools: [send, inbox, who]}\nlimits: {depth: 2, concurrency: 2}\n"
 	e := core.New(db, core.WithTemplates(func(name, _ string) (string, error) {

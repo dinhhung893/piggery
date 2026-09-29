@@ -9,7 +9,7 @@ import (
 )
 
 const planDev = `
-model: pd
+template: pd
 roles:
   planner:  {tools: [send, who, agent], can_spawn: [dev]}
   dev:      {tools: [], spawn: {model: small, thinking: max}}
@@ -106,7 +106,7 @@ func TestRolesV1Validation(t *testing.T) {
 		{"reviewer: {tools: [send]}", "reviewer: {tools: [send, review]}"},
 		{"{from: dev, to: reviewer, allow: true}", "{from: dev, to: reviewer, allow: true, cc: [ghost]}"},
 		{"limits: {depth: 2, concurrency: 5}", "limits: {depth: 2, concurrency: 5, budget_tokens: 100}"}, // out of scope
-		{"model: pd", "model: pd\nauto_join_role: ghost"},                                                // unknown role
+		{"template: pd", "template: pd\nauto_join_role: ghost"},                                          // unknown role
 	} {
 		man := strings.Replace(planDev, c.from, c.to, 1)
 		if man == planDev {
@@ -157,7 +157,7 @@ func TestRoutingCCCopies(t *testing.T) {
 	var woken []string
 	e := core.New(db, core.WithNotify(func(id string) { woken = append(woken, id) }))
 	man := `
-model: cc
+template: cc
 roles: {a: {tools: [send, inbox, who, agent]}, b: {tools: [send, inbox, who, agent]}, c: {tools: [send, inbox, who, agent]}}
 routing:
   - {from: a, to: b, allow: true, cc: [a, b, c]}
@@ -203,7 +203,7 @@ limits: {messages_per_participant_per_minute: 2}
 		cp[0].Kind != "plan" || cp[0].FromLabel != "a1 (a)" || cp[0].CcTo != "b1 (b)" {
 		t.Fatalf("c1 copy = %+v", cp)
 	}
-	if in := inbox(b2); len(in) != 1 || in[0].CcTo != "b1 (your peer)" {
+	if in := inbox(b2); len(in) != 1 || in[0].CcTo != "b1 (b)" {
 		t.Fatalf("b2 copy = %+v", in)
 	}
 
@@ -254,5 +254,70 @@ func TestToolPlaceholders(t *testing.T) {
 	bad := strings.Replace(man, "{tool:who}", "{tool:finish}", 1)
 	if _, err := e.TeamUp(ctx, core.TeamUpArgs{Manifest: bad, Cwd: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "{tool:finish}") {
 		t.Fatalf("team up with {tool:finish}: %v; want refused", err)
+	}
+}
+
+// The Human's shared prompts go into the card right after the role's instructions, asked by the
+// team's template (the manifest's template:) and role, and by ("", "solo") for a solo.
+func TestSharedPromptsInTheCard(t *testing.T) {
+	db, err := store.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var asked []string
+	e := core.New(db, core.WithSharedPrompts(func(template, role string) string {
+		asked = append(asked, template+"/"+role)
+		return "\nSHARED " + template + "/" + role + "\n"
+	}))
+	man := strings.Replace(leadWorker, "lead:   {", "lead:   {instructions: 'DO THIS', ", 1)
+	team, err := e.TeamUp(ctx, core.TeamUpArgs{Manifest: man, Cwd: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := e.Join(ctx, core.JoinArgs{Team: team.ID, Role: "lead", Name: "l", Cwd: team.RootCwd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := e.Authenticate(ctx, j.ID, j.Token)
+	id, err := e.Identify(ctx, c, core.IdentifyArgs{RunID: c.RunID})
+	card := id.RoleCard
+	i, k, o := strings.Index(card, "DO THIS"), strings.Index(card, "SHARED lw/lead"), strings.Index(card, "Other participants")
+	if err != nil || !(0 <= i && i < k && k < o) {
+		t.Fatalf("card %q, %v: want the shared text after the instructions and before the participants", card, err)
+	}
+	sj, err := e.JoinAuto(ctx, core.JoinAutoArgs{Cwd: t.TempDir(), Harness: "pi", Mode: "rpc", HarnessRef: "solo-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc, _ := e.Authenticate(ctx, sj.ID, sj.Token)
+	if id, err := e.Identify(ctx, sc, core.IdentifyArgs{RunID: sc.RunID}); err != nil || !strings.Contains(id.RoleCard, "SHARED /solo") {
+		t.Fatalf("solo card %q, %v", id.RoleCard, err)
+	}
+}
+
+// A team whose stored manifest snapshot still has the old `model:` key runs: its members get their
+// card naming the template.
+func TestLegacyModelKeyInAStoredManifest(t *testing.T) {
+	db, err := store.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	e := core.New(db)
+	team, err := e.TeamUp(ctx, core.TeamUpArgs{Manifest: "template: old\nroles: {peer: {tools: [send]}}\n", Cwd: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE teams SET manifest='model: old' || char(10) || 'roles: {peer: {tools: [send]}}' WHERE id=?`, team.ID); err != nil {
+		t.Fatal(err)
+	}
+	j, err := e.Join(ctx, core.JoinArgs{Team: team.ID, Role: "peer", Name: "p", Cwd: team.RootCwd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := e.Authenticate(ctx, j.ID, j.Token)
+	if id, err := e.Identify(ctx, c, core.IdentifyArgs{RunID: c.RunID}); err != nil || !strings.Contains(id.RoleCard, "(template old)") {
+		t.Fatalf("card %q, %v", id.RoleCard, err)
 	}
 }

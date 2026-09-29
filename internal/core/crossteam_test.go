@@ -48,8 +48,8 @@ func TestTeamGate(t *testing.T) {
 		return cs
 	}
 	// The parent team routes nothing, even inside: cross-team mail must not depend on it.
-	x := up("x", "model: closed\nroles: {peer: {tools: [send, inbox, who]}}\n", parent, "x1", "x2")
-	y := up("y", "model: open\nroles: {peer: {tools: [send, inbox, who]}}\nrouting:\n  - {from: peer, to: peer, allow: true}\n", child, "y1", "y2")
+	x := up("x", "template: closed\nroles: {peer: {tools: [send, inbox, who]}}\n", parent, "x1", "x2")
+	y := up("y", "template: open\nroles: {peer: {tools: [send, inbox, who]}}\nrouting:\n  - {from: peer, to: peer, allow: true}\n", child, "y1", "y2")
 
 	// A solo standing at y's root: y sees it as admittable.
 	sj, err := e.JoinAuto(ctx, core.JoinAutoArgs{Cwd: child, Harness: "pi", Mode: "rpc", HarnessRef: "solo", Name: "lone"})
@@ -133,7 +133,7 @@ func TestTeamGate(t *testing.T) {
 
 	// Only roles with send can be the gate: a supervisor-executor-like team whose planner is gone
 	// has a live dev but no gate.
-	pd, err := e.TeamUp(ctx, core.TeamUpArgs{Name: "pd", Cwd: t.TempDir(), Manifest: "model: pd\n" +
+	pd, err := e.TeamUp(ctx, core.TeamUpArgs{Name: "pd", Cwd: t.TempDir(), Manifest: "template: pd\n" +
 		"roles: {planner: {tools: [send, inbox, who]}, dev: {tools: [inbox, who]}}\n"})
 	if err != nil {
 		t.Fatal(err)

@@ -173,20 +173,30 @@ func (t *txn) setState(p *participant, to, cause string) error {
 	return nil
 }
 
+// sharedPrompt is the Human's shared text for a role of a team's template, named as the manifest's
+// `template:` (a solo: "", "solo"), read now, so an edit shows in the next card. "" when none applies.
+func (t *txn) sharedPrompt(template, role string) string {
+	if t.shared == nil {
+		return ""
+	}
+	return t.shared(template, role)
+}
+
 // roleCard is the plain-text card put in every run's system prompt. It never contains tokens.
 func (t *txn) roleCard(p participant, m manifest) (string, error) {
 	if p.team == "" {
-		return soloCard(p), nil
+		return soloCard(p) + t.sharedPrompt("", "solo"), nil
 	}
 	var team string
 	if err := t.QueryRowContext(t.ctx, `SELECT name FROM teams WHERE id=?`, p.team).Scan(&team); err != nil {
 		return "", internal(err)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are %s, role %q in piggery team %q (model %s).\n", p.name, p.role, team, m.Model)
+	fmt.Fprintf(&b, "You are %s, role %q in piggery team %q (template %s).\n", p.name, p.role, team, m.Template)
 	if ins := strings.TrimSpace(m.Roles[p.role].Instructions); ins != "" {
 		b.WriteString("\n" + WithToolNames(ins, p.toolPrefix) + "\n")
 	}
+	b.WriteString(t.sharedPrompt(m.Template, p.role))
 	rows, err := t.QueryContext(t.ctx, `SELECT `+participantCols+` FROM participants WHERE team_id=? AND id<>? ORDER BY created_at, rowid`,
 		p.team, p.id)
 	if err != nil {

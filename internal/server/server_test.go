@@ -573,10 +573,10 @@ func TestTemplatesAction(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	put(filepath.Join(cwd, "manifests", "p2p.yaml"), "model: p2p\nsummary: repo peers\nroles: {peer: {tools: [send]}}\n")
-	put(filepath.Join(cwd, "manifests", "repo.yaml"), "model: repo\nroles: {peer: {tools: [send]}}\n")
+	put(filepath.Join(cwd, "manifests", "p2p.yaml"), "template: p2p\nsummary: repo peers\nroles: {peer: {tools: [send]}}\n")
+	put(filepath.Join(cwd, "manifests", "repo.yaml"), "template: repo\nroles: {peer: {tools: [send]}}\n")
 	put(filepath.Join(manifests.Dir(dir), "mine", manifests.ManifestFile),
-		"model: mine\nsummary: my flow\nroles:\n  peer: {description: me, tools: [send, inbox, who, agent]}\n")
+		"template: mine\nsummary: my flow\nroles:\n  peer: {description: me, tools: [send, inbox, who, agent]}\n")
 	c := dial(t, dir)
 	var solo core.JoinResult
 	if _, err := c.CallInto(proto.VerbJoinAuto, core.JoinAutoArgs{Cwd: cwd, Harness: "pi", Mode: "rpc", HarnessRef: "sess-1"}, &solo); err != nil {

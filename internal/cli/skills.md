@@ -66,11 +66,11 @@ not run is refused and nothing changes. Tell the Human what `ps` shows after.
 
 A template is `~/.piggery/templates/<name>/manifest.yaml` plus the prompt files it names,
 relative to that directory. To start from a built-in, copy its directory under a new name and
-set `model:` to that name. You do not bring it up: the Human does, or asks a session to found it.
+set `template:` to that name. You do not bring it up: the Human does, or asks a session to found it.
 
 **Manifest fields** (only these exist):
 
-- `model` (required): the template's name, also the default team name. `summary`: one line, when
+- `template` (required): the template's name, also the default team name. `summary`: one line, when
   to use it. `auto_join_role`: the founder's role (else the only role).
 - `roles.<role>` (at least one): `description` (one line); `instructions_file` or `instructions`;
   `tools` (`send`, `inbox`, `who`, `agent`; there are no other tools); `can_spawn: [role]`; `can_pin: true` (board, needs
@@ -92,11 +92,13 @@ persona. Stay neutral about the kind of work: a task is a result, its bounds, an
 out the lifecycle: give the next task to a free worker instead of spawning; end the turn after
 sending; when a worker goes silent, read its tail, then nudge or resume it; stop workers when done.
 
+**The Human's own rules** are not in a template: `prompts:` in `~/.piggery/config.yaml` appends a file of theirs to the card of every role it names (`<role>`, `<template>/<role>` or `solo`), so do not copy such rules into a template's prompts.
+
 **A small complete template** (`~/.piggery/templates/brief/`):
 
 ```yaml
 # manifest.yaml
-model: brief
+template: brief
 summary: A lead splits a question into parts; helpers each answer one part and report back.
 auto_join_role: lead
 roles:

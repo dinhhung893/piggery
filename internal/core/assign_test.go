@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/sting8k/piggery/internal/core"
@@ -42,6 +43,10 @@ func TestAssignment(t *testing.T) {
 	handback := send(w, core.SendArgs{To: "lead", Body: "done", ReplyTo: fmt.Sprintf("#%d", a.Seq)})
 	if l := assignment().Latest; l == nil || l.Seq != handback.Seq || !l.ByMember {
 		t.Fatalf("after handback latest = %+v; want #%d by the member", l, handback.Seq)
+	}
+	// The lead sees the worker's handback labelled with the worker's real role and the relation.
+	if in, err := f.e.Inbox(ctx, f.lead, core.InboxArgs{}); err != nil || len(in) == 0 || !strings.HasSuffix(in[len(in)-1].FromLabel, ", reports to you)") {
+		t.Fatalf("lead inbox after the handback = %+v, %v; want the sender labelled (<role>, reports to you)", in, err)
 	}
 	note := send(f.lead, core.SendArgs{To: "w1", Body: "I restart the daemon"})
 	if a2 := assignment(); a2.Seq != a.Seq || a2.Newer == nil || a2.Newer.Seq != note.Seq {

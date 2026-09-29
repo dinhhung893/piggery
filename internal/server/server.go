@@ -154,6 +154,12 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := manifests.Unpack(cfg.Dir); err != nil {
 		return fmt.Errorf("templates: %w", err)
 	}
+	// The Human's shared prompts: what cannot work is logged and left out, never a reason not to start.
+	var promptWarns []string
+	settings.Prompts, promptWarns = CheckPrompts(cfg.Dir, settings.Prompts)
+	for _, w := range append(settings.Warnings, promptWarns...) {
+		log.Warn("shared prompts", "problem", w)
+	}
 	// Every config file piggery owns gets the keys it lacks, as `piggery setup` does; a file its
 	// parser refuses is only logged here, the parser says why where it is read.
 	filled, errs := EnsureFiles(cfg.Dir)
@@ -200,7 +206,8 @@ func Run(ctx context.Context, cfg Config) error {
 		runtimes[i] = core.WithRuntime(d)
 	}
 	s.eng = core.New(db, append(runtimes, core.WithNotify(s.wake),
-		core.WithDefaultHarness(settings.Harness), core.WithAllowedRoots(settings.AllowedRoots), core.WithNotifySink(s.notifyHook),
+		core.WithDefaultHarness(settings.Harness), core.WithAllowedRoots(settings.AllowedRoots),
+		core.WithSharedPrompts(promptsFor(s.dir, settings.Prompts, func(m string) { s.log.Warn("shared prompts", "problem", m) })), core.WithNotifySink(s.notifyHook),
 		core.WithTemplates(func(name, _ string) (string, error) { return manifests.Resolve(name, s.dir) }),
 		core.WithTemplateList(func(string) ([]core.TemplateRef, error) {
 			ls, err := manifests.List(s.dir)

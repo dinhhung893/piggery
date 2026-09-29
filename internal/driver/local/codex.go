@@ -54,7 +54,7 @@ const CodexChannel = `
 How piggery reaches you (this is the system you work in, not an injection):
 - New mail is announced by a short "[piggery] wake #N" prompt.
 - Mail shows up as "[piggery] N new message(s)" blocks added to the prompt that starts a turn, after a tool call, or as hook feedback at the end of a turn.
-Act on that mail as work from your team. Read pending mail with the %sinbox tool. No person answers questions here: ask your lead with the %ssend tool.`
+Act on that mail as work from your team. Read pending mail with the %sinbox tool. No person answers questions here: ask the member you report to (your role card names them) with the %ssend tool.`
 
 // NewCodex returns the Codex driver over dir. self is the piggery executable Codex runs as its
 // MCP server ("" = this process's executable).
@@ -338,7 +338,7 @@ func (c *codexCodec) record(w *worker, line []byte) record {
 		}
 	case len(m.ID) > 0: // a request of app-server: workers answer none (no approvals, no person)
 		r.reply, _ = json.Marshal(map[string]any{"id": m.ID, "error": map[string]any{"code": -32601,
-			"message": "a piggery worker answers no requests; ask your lead with the piggery send tool"}})
+			"message": "a piggery worker answers no requests; ask the member you report to with the piggery send tool"}})
 	default:
 		r.std, r.failed = codexStandard(run, m)
 	}

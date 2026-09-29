@@ -36,7 +36,7 @@ func TestFound(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	multi := "model: m\nroles: {a: {tools: [send]}, b: {tools: [send]}}\n"
+	multi := "template: m\nroles: {a: {tools: [send]}, b: {tools: [send]}}\n"
 	if err := os.WriteFile(filepath.Join(manifests.Dir(home), "multi", manifests.ManifestFile), []byte(multi), 0o600); err != nil {
 		t.Fatal(err)
 	}

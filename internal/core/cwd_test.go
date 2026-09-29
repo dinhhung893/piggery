@@ -13,7 +13,7 @@ import (
 )
 
 const lanes = `
-model: lanes
+template: lanes
 roles:
   lead:   {can_spawn: [worker], can_set_cwd: true, tools: [send, inbox, who, agent]}
   worker: {can_spawn: [worker], tools: [send, inbox, who, agent]}

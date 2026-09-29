@@ -19,7 +19,7 @@ func TestEnsureFiles(t *testing.T) {
 	os.WriteFile(local.CodexProfilePath(dir), []byte("{\n  \"cmd\": \"codex\"\n}\n"), 0o600)
 	mine := filepath.Join(manifests.Dir(dir), "mine", manifests.ManifestFile)
 	os.MkdirAll(filepath.Dir(mine), 0o700)
-	tmpl := "model: mine   # my own\nroles:\n  lead:\n    instructions: \"Lead.\"\n"
+	tmpl := "template: mine   # my own\nroles:\n  lead:\n    instructions: \"Lead.\"\n"
 	os.WriteFile(mine, []byte(tmpl), 0o600)
 	bad := filepath.Join(manifests.Dir(dir), "bad", manifests.ManifestFile)
 	os.MkdirAll(filepath.Dir(bad), 0o700)

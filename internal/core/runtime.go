@@ -149,6 +149,13 @@ func WithDefaultHarness(h string) Option { return func(e *Engine) { e.defaultHar
 // `spawn.allowed_roots`).
 func WithAllowedRoots(dirs []string) Option { return func(e *Engine) { e.allowedRoots = dirs } }
 
+// WithSharedPrompts sets where a role card gets the Human's shared text (config.yaml `prompts`): f
+// returns the text for a role of a template ("" for none); what f cannot read it skips itself.
+// A solo asks with template "" and role "solo". Core only passes the names; the text is opaque.
+func WithSharedPrompts(f func(template, role string) string) Option {
+	return func(e *Engine) { e.sharedPrompts = f }
+}
+
 // driverNamed is the driver of harness h, nil when none runs it.
 func (e *Engine) driverNamed(h string) RuntimeDriver {
 	for _, d := range e.runtimes {

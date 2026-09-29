@@ -9,11 +9,11 @@ import (
 )
 
 // manifestKeys are a template's keys, each with what is written when it is missing: every default
-// reads as if the key were left out (inherit, none, [], false, ""). model, roles and a rule's
+// reads as if the key were left out (inherit, none, [], false, ""). template, roles and a rule's
 // from/to are required and never added; a role's instructions or instructions_file is the author's
 // to choose. The key set is kept equal to the manifest types by TestManifestKeysMatchTheParser.
 var manifestKeys = []yamlfill.Key{
-	{Name: "model"},
+	{Name: "template"},
 	{Name: "summary", Default: `""`},
 	{Name: "auto_join_role", Default: `""`},
 	{Name: "roles", Each: []yamlfill.Key{

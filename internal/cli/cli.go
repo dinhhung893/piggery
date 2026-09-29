@@ -200,7 +200,7 @@ func (e *env) teamUp(args []string) error {
 	}
 	return do(e, proto.VerbTeamUp, core.TeamUpArgs{Name: *name, Manifest: manifest, Cwd: dir},
 		func(w io.Writer, t core.Team) {
-			fmt.Fprintf(w, "team %s name=%s model=%s root=%s\n", t.ID, t.Name, t.Model, t.RootCwd)
+			fmt.Fprintf(w, "team %s name=%s template=%s root=%s\n", t.ID, t.Name, t.Template, t.RootCwd)
 		})
 }
 

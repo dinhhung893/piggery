@@ -20,7 +20,7 @@ func (e *Engine) TeamUp(ctx context.Context, a TeamUpArgs) (Team, error) {
 	}
 	name := strings.TrimSpace(a.Name)
 	if name == "" {
-		name = m.Model
+		name = m.Template
 	}
 	var team Team
 	err = e.inTx(ctx, func(t *txn) error {
@@ -74,14 +74,14 @@ func validManifest(text string) (manifest, error) {
 
 // insertTeam stores a new open team (name already checked free) with its team_up event.
 func (t *txn) insertTeam(name, text string, m manifest, cwd string) (Team, error) {
-	team := Team{ID: newID(t.now), Name: name, Model: m.Model, RootCwd: cwd, CreatedAt: t.now}
+	team := Team{ID: newID(t.now), Name: name, Template: m.Template, RootCwd: cwd, CreatedAt: t.now}
 	if _, err := t.ExecContext(t.ctx,
-		`INSERT INTO teams(id, name, model_name, manifest, root_cwd, created_at) VALUES (?,?,?,?,?,?)`,
-		team.ID, team.Name, team.Model, text, team.RootCwd, team.CreatedAt); err != nil {
+		`INSERT INTO teams(id, name, template_name, manifest, root_cwd, created_at) VALUES (?,?,?,?,?,?)`,
+		team.ID, team.Name, team.Template, text, team.RootCwd, team.CreatedAt); err != nil {
 		return Team{}, internal(err)
 	}
 	return team, t.event(evt{typ: "team_up", team: team.ID, ref: team.ID,
-		payload: map[string]any{"name": team.Name, "model": team.Model, "root_cwd": team.RootCwd}})
+		payload: map[string]any{"name": team.Name, "template": team.Template, "root_cwd": team.RootCwd}})
 }
 
 // Join registers a participant in an open team and issues its token (only the hash is stored).

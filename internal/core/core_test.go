@@ -108,7 +108,7 @@ func TestSendStampsSenderAndWhoListsState(t *testing.T) {
 	f := newFixture(t, nil)
 	f.send(t, f.alice, core.SendArgs{To: "bob", Body: "hi"})
 	got := f.inbox(t, f.bob, nil)
-	if len(got) != 1 || got[0].From != f.alice.ParticipantID || got[0].FromLabel != "alice (your peer)" {
+	if len(got) != 1 || got[0].From != f.alice.ParticipantID || got[0].FromLabel != "alice (peer)" {
 		t.Fatalf("inbox = %+v", got)
 	}
 	who, err := f.e.Who(ctx, f.bob)
@@ -335,7 +335,7 @@ func TestWatchAddEnforcesRouting(t *testing.T) {
 	defer db.Close()
 	e := core.New(db)
 	const man = `
-model: lw
+template: lw
 roles: {lead: {tools: [send, inbox, who, agent]}, worker: {tools: [send, inbox, who, agent]}}
 routing:
   - {from: lead, to: worker, allow: true}
@@ -387,7 +387,7 @@ func TestIdentifyNewRunOrphansOldRun(t *testing.T) {
 	if err != nil || fresh.RunID == f.bob.RunID {
 		t.Fatalf("new_run identify = %+v, %v; want a new run", fresh, err)
 	}
-	if !strings.Contains(fresh.RoleCard, "alice (your peer)") || !strings.Contains(fresh.RoleCard, "piggery_send") || !eq(fresh.Tools, []string{"send", "inbox", "who", "agent"}) {
+	if !strings.Contains(fresh.RoleCard, "alice (peer)") || !strings.Contains(fresh.RoleCard, "piggery_send") || !eq(fresh.Tools, []string{"send", "inbox", "who", "agent"}) {
 		t.Fatalf("role card/tools = %q %v", fresh.RoleCard, fresh.Tools)
 	}
 	if _, err := f.e.Completion(ctx, f.bob, core.CompletionArgs{Batch: 1}); code(err) != core.CodeUnauthorized {

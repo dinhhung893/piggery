@@ -18,7 +18,7 @@ func TestAdmit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	const man = "model: m\nauto_join_role: lead\nroles:\n  lead: {tools: [send, inbox, who, agent], can_spawn: [peer, lead]}\n" +
+	const man = "template: m\nauto_join_role: lead\nroles:\n  lead: {tools: [send, inbox, who, agent], can_spawn: [peer, lead]}\n" +
 		"  peer: {tools: [send, inbox, who]}\n  guest: {tools: [inbox]}\nlimits: {depth: 2, concurrency: 2}\nrouting: [{from: lead, to: lead, allow: true}]\n"
 	var pushed []string
 	rt := &fakeRuntime{}

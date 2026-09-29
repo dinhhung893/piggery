@@ -27,7 +27,7 @@ func newWatchFixture(t *testing.T, rule string, opts ...core.Option) watchFixtur
 	t.Cleanup(func() { db.Close() })
 	now := time.Unix(1_800_000_000, 0)
 	e := core.New(db, append(opts, core.WithClock(func() time.Time { return now }))...)
-	man := "model: wr\nroles: {lead: {tools: [send, inbox, who, agent]}, worker: {tools: [send, inbox, who, agent]}}\nrouting:\n" +
+	man := "template: wr\nroles: {lead: {tools: [send, inbox, who, agent]}, worker: {tools: [send, inbox, who, agent]}}\nrouting:\n" +
 		"  - {from: lead, to: worker, allow: true}\n  - {from: worker, to: lead, allow: true}\n" +
 		"timers:\n  - " + rule + "\n"
 	team, err := e.TeamUp(ctx, core.TeamUpArgs{Manifest: man, Cwd: t.TempDir()})
@@ -125,7 +125,7 @@ func TestWatchRulesValidated(t *testing.T) {
 		"{on: ghost, notify: lead, silent_for: 1m}",               // unknown role
 		"{on: worker, notify: nobody, silent_for: 1m}",            // unknown target
 	} {
-		man := "model: wr\nroles: {lead: {tools: [send, inbox, who, agent]}, worker: {tools: [send, inbox, who, agent]}}\ntimers:\n  - " + rule + "\n"
+		man := "template: wr\nroles: {lead: {tools: [send, inbox, who, agent]}, worker: {tools: [send, inbox, who, agent]}}\ntimers:\n  - " + rule + "\n"
 		if _, err := e.TeamUp(ctx, core.TeamUpArgs{Manifest: man, Cwd: t.TempDir()}); code(err) != core.CodeInvalid {
 			t.Fatalf("rule %s: %v", rule, err)
 		}

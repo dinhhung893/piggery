@@ -254,8 +254,8 @@ func New(home, name, from string) (string, error) {
 		return "", err
 	}
 	for rel, content := range tf {
-		if rel == ManifestFile { // model is the team's name at team up: the copy's own name
-			content = renameModel(content, name)
+		if rel == ManifestFile { // template is the team's name at team up: the copy's own name
+			content = renameTemplate(content, name)
 		}
 		p := filepath.Join(dir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
@@ -268,18 +268,72 @@ func New(home, name, from string) (string, error) {
 	return dir, nil
 }
 
-// topModel is the value of the manifest's top-level model: line (comments after it are kept).
-var topModel = regexp.MustCompile(`(?m)^(model:[ \t]*)[^\s#]+`)
+// topTemplate is the value of the manifest's top-level template: line (comments after it are kept).
+var topTemplate = regexp.MustCompile(`(?m)^(template:[ \t]*)[^\s#]+`)
 
-// renameModel sets the top-level model to name, changing nothing else in the file.
-func renameModel(manifest []byte, name string) []byte {
-	loc := topModel.FindSubmatchIndex(manifest)
+// renameTemplate sets the top-level template to name, changing nothing else in the file.
+func renameTemplate(manifest []byte, name string) []byte {
+	loc := topTemplate.FindSubmatchIndex(manifest)
 	if loc == nil {
 		return manifest
 	}
 	out := append([]byte{}, manifest[:loc[3]]...)
 	out = append(out, name...)
 	return append(out, manifest[loc[1]:]...)
+}
+
+// legacyKey is the top-level model: line a manifest had before its name key became template:.
+var legacyKey = regexp.MustCompile(`(?m)^model:`)
+
+// MigrateKey renames the top-level `model:` of each manifest in the home's templates to
+// `template:`, changing no other byte, and returns the manifests it changed. A manifest that has a
+// `template:` already is left alone. One that is still an unedited built-in (its hash is the one
+// Unpack recorded) has its record moved to the new hash, so it keeps updating like before.
+func MigrateKey(home string) ([]string, error) {
+	ls, err := List(home)
+	if err != nil {
+		return nil, err
+	}
+	recPath := filepath.Join(Dir(home), recordFile)
+	record := map[string]map[string]string{}
+	if b, err := os.ReadFile(recPath); err == nil {
+		if err := json.Unmarshal(b, &record); err != nil {
+			return nil, fmt.Errorf("%s: %w", recPath, err)
+		}
+	}
+	var changed []string
+	recorded := false
+	for _, l := range ls {
+		p := filepath.Join(l.From, ManifestFile)
+		cur, err := os.ReadFile(p)
+		if err != nil {
+			return changed, err
+		}
+		if !legacyKey.Match(cur) || topTemplate.Match(cur) {
+			continue
+		}
+		loc := legacyKey.FindIndex(cur)
+		out := append(append(append([]byte{}, cur[:loc[0]]...), "template:"...), cur[loc[1]:]...)
+		info, err := os.Stat(p)
+		if err != nil {
+			return changed, err
+		}
+		if err := os.WriteFile(p, out, info.Mode().Perm()); err != nil {
+			return changed, err
+		}
+		changed = append(changed, p)
+		if rec := record[l.Name]; rec != nil && rec[ManifestFile] == hash(cur) {
+			rec[ManifestFile], recorded = hash(out), true
+		}
+	}
+	if recorded {
+		b, err := json.MarshalIndent(record, "", "  ")
+		if err != nil {
+			return changed, err
+		}
+		return changed, os.WriteFile(recPath, append(b, '\n'), 0o600)
+	}
+	return changed, nil
 }
 
 func hash(b []byte) string {

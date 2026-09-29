@@ -31,7 +31,7 @@ func TestOpenMigratesV1File(t *testing.T) {
 	}
 	defer db.Close()
 	var version, team string
-	if err := db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&version); err != nil || version != "21" {
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&version); err != nil || version != "22" {
 		t.Fatalf("version = %q, %v", version, err)
 	}
 	if err := db.QueryRow(`SELECT name FROM teams WHERE id='T1'`).Scan(&team); err != nil || team != "p2p" {
@@ -166,10 +166,10 @@ func TestOpenBacksUpBeforeMigrating(t *testing.T) {
 		}
 		db.Close()
 	}
-	if got, want := names(), "mine.db pre-v18-21 pre-v19-21 pre-v20-21 pre-v3-4-by-hand.db"; got != want {
+	if got, want := names(), "mine.db pre-v18-22 pre-v19-22 pre-v20-22 pre-v3-4-by-hand.db"; got != want {
 		t.Fatalf("backups = %q; want the 3 newest upgrades, and both other files kept", got)
 	}
-	es, _ := filepath.Glob(filepath.Join(backups, "pre-v20-21-*.db"))
+	es, _ := filepath.Glob(filepath.Join(backups, "pre-v20-22-*.db"))
 	cp, err := sql.Open("sqlite", "file:"+es[0])
 	if err != nil {
 		t.Fatal(err)
@@ -196,5 +196,35 @@ func TestOpenBacksUpBeforeMigrating(t *testing.T) {
 	defer raw.Close()
 	if err := raw.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&version); err != nil || version != "20" {
 		t.Fatalf("after the failed backup the DB is at v%s, %v; want it left at v20", version, err)
+	}
+}
+
+// A v21 DB (the team's template name in model_name, its manifest snapshot with `model:`) opens at the
+// latest version with the column renamed and the snapshot untouched (the parser reads the old key).
+func TestOpenRenamesTheTeamTemplateColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "piggery.db")
+	old, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, ddl := range migrations[:21] {
+		if _, err := old.Exec(ddl); err != nil {
+			t.Fatalf("v%d: %v", i+1, err)
+		}
+	}
+	if _, err := old.Exec(`INSERT INTO meta(key, value) VALUES ('schema_version', '21')
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+		INSERT INTO teams(id, name, model_name, manifest, root_cwd, created_at) VALUES ('T1', 't', 'plan', 'model: plan', '/x', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var tpl, manifest string
+	if err := db.QueryRow(`SELECT template_name, manifest FROM teams WHERE id='T1'`).Scan(&tpl, &manifest); err != nil || tpl != "plan" || manifest != "model: plan" {
+		t.Fatalf("team after the migration: %q %q, %v", tpl, manifest, err)
 	}
 }

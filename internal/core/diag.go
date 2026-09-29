@@ -87,7 +87,7 @@ func (e *Engine) readOnly(ctx context.Context, fn func(t *txn) error) error {
 		return internal(err)
 	}
 	defer tx.Rollback()
-	return fn(&txn{Tx: tx, ctx: ctx, now: e.now().UnixMilli(), solo: e.soloManifest()})
+	return fn(&txn{Tx: tx, ctx: ctx, now: e.now().UnixMilli(), solo: e.soloManifest(), shared: e.sharedPrompts})
 }
 
 // participantForAdmin resolves a participant by id, or by name within team (id or name) when

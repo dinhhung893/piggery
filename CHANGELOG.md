@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.4.0 - 2026-09-29
+
+Shared prompts: your own rules (code style, how you organise a project) go into the role card of
+the roles you pick, in every template and harness.
+
+- `config.yaml` `prompts: [{file, roles}]`: a role is `<role>` (every template), `<template>/<role>`
+  or `solo`. The file is read each time a card is built, so an edit reaches the next session with no
+  restart. A mistake (an unreadable file, an unknown template, a role in no template) is a warning
+  in `~/.piggery/serve.log` and that part is skipped; it never stops the daemon or a spawn.
+- A template's name key is `template:` (was `model:`, easy to read as the AI model). Your templates
+  are rewritten in place at `setup` or daemon start (only that key); teams already made keep
+  working, and a file with `model:` is still read.
+- Mail headers name the sender's real role and the relation: `ana (supervisor, you report to
+  them)`, `bo (executor, reports to you)`; before, any superior read "your lead" and a same-role
+  member "your peer". Codex workers are told to ask the member they report to, not "your lead".
+
 ## v0.3.0 - 2026-09-29
 
 Two new harnesses, omp (oh-my-pi) and dsh (DeepSeek Harness 0.2), and each member's current task

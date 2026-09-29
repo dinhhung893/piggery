@@ -134,7 +134,7 @@ func (f *fakeRuntime) Tail(string, int) ([]json.RawMessage, error) {
 }
 
 const leadWorker = `
-model: lw
+template: lw
 roles:
   lead:   {can_spawn: [worker], tools: [send, inbox, who, agent]}
   worker: {can_spawn: [worker], tools: [send, inbox, who, agent]}
@@ -327,7 +327,7 @@ func TestSpawnStartFailureKeepsTaskForResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, err := f.e.Inbox(ctx, w, core.InboxArgs{})
-	if err != nil || len(d) != 1 || d[0].ID != spawned.TaskID || d[0].FromLabel != "lead (your lead)" {
+	if err != nil || len(d) != 1 || d[0].ID != spawned.TaskID || d[0].FromLabel != "lead (lead, you report to them)" {
 		t.Fatalf("worker inbox = %+v, %v", d, err)
 	}
 	// The worker's extension identifies with the run it was started with (PIGGERY_RUN_ID): ready.
@@ -866,7 +866,7 @@ func TestWorkerHarnessChoice(t *testing.T) {
 	cc := &fakeRuntime{harness: "claude", profileModel: "sonnet"}
 	e := core.New(db, core.WithRuntime(pi), core.WithRuntime(cc), core.WithDefaultHarness("pi"))
 	team, err := e.TeamUp(ctx, core.TeamUpArgs{Cwd: t.TempDir(), Manifest: `
-model: h
+template: h
 roles:
   lead:   {can_spawn: [worker, claudy, ghost], tools: [agent]}
   worker: {}

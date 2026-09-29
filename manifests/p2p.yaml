@@ -1,5 +1,5 @@
 # Null model: peers talk freely. Used by step-1 acceptance.
-model: p2p
+template: p2p
 summary: Peers that talk freely and spawn more peers; no roles, no review loop.
 auto_join_role: peer   # the only role
 roles:

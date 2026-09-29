@@ -53,7 +53,7 @@ func (f diagFixture) events(t *testing.T) int {
 // rule match what Send then does, and why itself writes nothing, not even a denied event.
 func TestWhyAgreesWithSend(t *testing.T) {
 	f := newDiagFixture(t, `
-model: why
+template: why
 roles: {a: {tools: [send, inbox, who, agent]}, b: {tools: [send, inbox, who, agent]}, c: {tools: [send, inbox, who, agent]}}
 routing:
   - {from: a, to: b, allow: true, cc: [c]}
@@ -110,7 +110,7 @@ limits: {messages_per_participant_per_minute: 1}
 // doctor: nothing on a healthy team; then one finding of each kind, and only those.
 func TestDoctorFindings(t *testing.T) {
 	f := newDiagFixture(t, `
-model: doc
+template: doc
 roles: {peer: {tools: [send, inbox, who, agent]}}
 routing:
   - {from: peer, to: peer, allow: true}

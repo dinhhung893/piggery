@@ -33,6 +33,11 @@ type Settings struct {
 	// AllowedRoots are directories (absolute) outside a team's root where a worker may be spawned;
 	// the team root and its git worktrees always are.
 	AllowedRoots []string
+	// Prompts are the Human's shared prompt files by role (see PromptEntry), without the entries
+	// that cannot work (CheckPrompts drops more at daemon start). Warnings say what was left out:
+	// the daemon logs them; a mistake there never stops it.
+	Prompts  []PromptEntry
+	Warnings []string
 }
 
 // DisplayColumns are the columns top and ps can show after the name, in their default order. A
@@ -45,7 +50,7 @@ const gcEvery = 24 * time.Hour
 // defaultSettings are the settings with no config file, and the values setup writes.
 func defaultSettings() Settings {
 	return Settings{GCClosedAfter: 14 * 24 * time.Hour, GCArchiveKeep: 30 * 24 * time.Hour, Harness: local.Harness,
-		Columns: slices.Clone(DisplayColumns), AllowedRoots: []string{}}
+		Columns: slices.Clone(DisplayColumns), AllowedRoots: []string{}, Prompts: []PromptEntry{}}
 }
 
 // configFile is the settings file's keys (every key LoadSettings takes).
@@ -61,6 +66,7 @@ type configFile struct {
 	Spawn struct {
 		AllowedRoots *[]string `yaml:"allowed_roots"`
 	} `yaml:"spawn"`
+	Prompts []PromptEntry `yaml:"prompts"`
 }
 
 // LoadSettings reads ConfigPath(dir); a missing file gives the defaults. An unknown key or a
@@ -108,6 +114,10 @@ func LoadSettings(dir string) (Settings, error) {
 		}
 		set.AllowedRoots = *roots
 	}
+	if raw.Prompts != nil {
+		kept, warns := checkPromptShape(ConfigPath(dir), raw.Prompts)
+		set.Prompts, set.Warnings = append([]PromptEntry{}, kept...), warns
+	}
 	if cols := raw.Display.Columns; cols != nil { // a display setting: never stops the daemon
 		set.Columns = *cols
 	}
@@ -140,6 +150,7 @@ func configKeys() []configKey {
 			"columns top and ps show, in order; remove one to hide it (name is always shown); read on every run, no restart"},
 		{"spawn.allowed_roots", "[" + strings.Join(d.AllowedRoots, ", ") + "]",
 			"absolute directories outside a team's root where a worker may be spawned with a cwd (the root and its repo's git worktrees always may)"},
+		{"prompts", "[]", "your prompt files by role, added to those roles' cards: - {file: rules/code.md, roles: [executor, solo, supervisor-executor/supervisor]} (file: relative to this directory or absolute; the file is read at each session start, the list needs a restart)"},
 	}
 }
 
@@ -276,6 +287,9 @@ func ConfigStatus(dir string) string {
 	}
 	if len(set.AllowedRoots) > 0 {
 		diff = append(diff, "spawn.allowed_roots ["+strings.Join(set.AllowedRoots, ", ")+"]")
+	}
+	if len(set.Prompts) > 0 {
+		diff = append(diff, fmt.Sprintf("prompts (%d)", len(set.Prompts)))
 	}
 	if !slices.Equal(set.Columns, d.Columns) {
 		diff = append(diff, "display.columns ["+strings.Join(set.Columns, ", ")+"]")

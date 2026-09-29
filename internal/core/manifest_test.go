@@ -83,7 +83,7 @@ func TestBuiltinTemplatesWriteEveryField(t *testing.T) {
 
 // inherit (spawn settings) and none (limits) read as if left out; another word is an error.
 func TestInheritAndNone(t *testing.T) {
-	m, err := parseManifest(`model: x
+	m, err := parseManifest(`template: x
 roles:
   r: {spawn: {harness: inherit, model: inherit, thinking: inherit}}
 limits: {depth: 2, max_respawn_per_hour: none}
@@ -98,7 +98,7 @@ limits: {depth: 2, max_respawn_per_hour: none}
 		t.Fatalf("limits %v; want max_respawn_per_hour left out, depth kept", m.Limits)
 	}
 	for _, bad := range []string{"limits: {depth: lots}", "limits: {depthz: none}"} {
-		if _, err := parseManifest("model: x\nroles: {r: {}}\n" + bad); err == nil {
+		if _, err := parseManifest("template: x\nroles: {r: {}}\n" + bad); err == nil {
 			t.Fatalf("%s: accepted", bad)
 		}
 	}
@@ -146,7 +146,7 @@ func TestManifestKeysMatchTheParser(t *testing.T) {
 func TestFillManifestFile(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "manifest.yaml")
-	src := "# my workflow\nmodel: mine\nroles:\n  lead:\n    instructions: \"Lead.\"   # short\n    tools: [send, agent]\n    spawn:\n      model: openai/gpt-x\n"
+	src := "# my workflow\ntemplate: mine\nroles:\n  lead:\n    instructions: \"Lead.\"   # short\n    tools: [send, agent]\n    spawn:\n      model: openai/gpt-x\n"
 	os.WriteFile(p, []byte(src), 0o600)
 	added, err := FillManifestFile(p)
 	if err != nil {
@@ -161,7 +161,7 @@ func TestFillManifestFile(t *testing.T) {
 	if again, err := FillManifestFile(p); err != nil || len(again) != 0 {
 		t.Fatalf("second run: %v %v", again, err)
 	}
-	bad := "model: x\nroles: {r: {}}\nlimits: {depth: lots}\n"
+	bad := "template: x\nroles: {r: {}}\nlimits: {depth: lots}\n"
 	os.WriteFile(p, []byte(bad), 0o600)
 	if _, err := FillManifestFile(p); err == nil {
 		t.Fatal("a refused template was filled")

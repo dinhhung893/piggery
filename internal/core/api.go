@@ -36,11 +36,12 @@ type Engine struct {
 	db             *sql.DB
 	now            func() time.Time
 	notify         func(participantID string)
-	runtimes       []RuntimeDriver // one per harness (WithRuntime)
-	defaultHarness string          // workers of no role or session harness (WithDefaultHarness)
-	allowedRoots   []string        // spawn cwd bounds besides the team root (WithAllowedRoots)
-	minProtocol    int             // lowest adapter protocol version identify accepts
-	deliverLocks   sync.Map        // participant id -> *sync.Mutex: one delivery at a time, in batch order
+	runtimes       []RuntimeDriver                    // one per harness (WithRuntime)
+	defaultHarness string                             // workers of no role or session harness (WithDefaultHarness)
+	allowedRoots   []string                           // spawn cwd bounds besides the team root (WithAllowedRoots)
+	sharedPrompts  func(template, role string) string // the Human's text for a role card (WithSharedPrompts)
+	minProtocol    int                                // lowest adapter protocol version identify accepts
+	deliverLocks   sync.Map                           // participant id -> *sync.Mutex: one delivery at a time, in batch order
 	// notifySink is told about each new, not held message to notify (WithNotifySink).
 	notifySink func(messageID string)
 	// roleChanged is told when a live session's role changes under it (WithRoleChanged).
@@ -100,7 +101,7 @@ type Caller struct {
 // ---- admin (the server checks the admin token before calling these) ----
 
 type TeamUpArgs struct {
-	Name     string `json:"name,omitempty"` // default: manifest model name
+	Name     string `json:"name,omitempty"` // default: the manifest's template name
 	Manifest string `json:"manifest"`       // YAML text, frozen into teams.manifest
 	Cwd      string `json:"cwd"`            // normalized by core: realpath, no trailing '/'
 }
@@ -108,7 +109,7 @@ type TeamUpArgs struct {
 type Team struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	Model     string `json:"model"`
+	Template  string `json:"template"`
 	RootCwd   string `json:"root_cwd"`
 	CreatedAt int64  `json:"created_at"`
 }
@@ -168,7 +169,7 @@ type SendResult struct {
 }
 
 // Message is a stored message as seen by a reader. FromLabel is the engine-stamped header,
-// e.g. `alice (your peer)`.
+// e.g. `alice (peer)` or `boss (supervisor, you report to them)`.
 type Message struct {
 	ID         string `json:"id"`
 	Seq        int64  `json:"seq"`

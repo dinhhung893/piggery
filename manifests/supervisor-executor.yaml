@@ -3,7 +3,7 @@
 # the fence: an executor reaches only the supervisor. The prompts say how to hand a task back (a
 # `send` with kind handback) and that questioning the task mid-way is welcome. The review loop is
 # the supervisor reading the handback and replying with kind=rework, or closing. No extra state.
-model: supervisor-executor
+template: supervisor-executor
 summary: A supervisor splits a goal (code, research, writing, operations…) into checkable tasks and judges each; executors do them, in parallel only when that helps.
 auto_join_role: supervisor   # the founder's role when a session founds a team from this template
 roles:

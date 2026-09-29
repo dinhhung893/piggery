@@ -16,10 +16,10 @@ import (
 func TestUnpackUpgrade(t *testing.T) {
 	home := t.TempDir()
 	v1 := fstest.MapFS{
-		"sup.yaml":        {Data: []byte("model: sup\nroles:\n  lead: {instructions_file: prompts/lead.md}\n  dev: {instructions_file: prompts/dev.md}\n")},
+		"sup.yaml":        {Data: []byte("template: sup\nroles:\n  lead: {instructions_file: prompts/lead.md}\n  dev: {instructions_file: prompts/dev.md}\n")},
 		"prompts/lead.md": {Data: []byte("lead v1")},
 		"prompts/dev.md":  {Data: []byte("dev v1")},
-		"gone.yaml":       {Data: []byte("model: gone\n")},
+		"gone.yaml":       {Data: []byte("template: gone\n")},
 	}
 	if err := unpack(home, v1); err != nil {
 		t.Fatal(err)
@@ -32,7 +32,7 @@ func TestUnpackUpgrade(t *testing.T) {
 		}
 		return string(b)
 	}
-	if read("sup/prompts/lead.md") != "lead v1" || read("gone/manifest.yaml") != "model: gone\n" {
+	if read("sup/prompts/lead.md") != "lead v1" || read("gone/manifest.yaml") != "template: gone\n" {
 		t.Fatalf("first unpack: lead=%q gone=%q", read("sup/prompts/lead.md"), read("gone/manifest.yaml"))
 	}
 	// The user edits one prompt and deletes a template.
@@ -47,7 +47,7 @@ func TestUnpackUpgrade(t *testing.T) {
 		"prompts/lead.md": {Data: []byte("lead v2")},
 		"prompts/dev.md":  {Data: []byte("dev v2")},
 		"gone.yaml":       v1["gone.yaml"],
-		"new.yaml":        {Data: []byte("model: new\n")},
+		"new.yaml":        {Data: []byte("template: new\n")},
 	}
 	if err := unpack(home, v2); err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestUnpackUpgrade(t *testing.T) {
 	if got := read("gone/manifest.yaml"); got != "(missing)" {
 		t.Fatalf("deleted template came back: %q", got)
 	}
-	if got := read("new/manifest.yaml"); got != "model: new\n" {
+	if got := read("new/manifest.yaml"); got != "template: new\n" {
 		t.Fatalf("new built-in = %q; want unpacked", got)
 	}
 	// Resolve reads the home only, with the prompts inlined; nothing else is a template.
@@ -103,10 +103,55 @@ func TestNew(t *testing.T) {
 	// Only the model line changes (it names the team): the rest of the file, comments included.
 	orig, _ := builtin.ReadFile("supervisor-executor.yaml")
 	got, _ := os.ReadFile(filepath.Join(dir, ManifestFile))
-	if want := strings.Replace(string(orig), "model: supervisor-executor", "model: mine", 1); string(got) != want {
+	if want := strings.Replace(string(orig), "template: supervisor-executor", "template: mine", 1); string(got) != want {
 		t.Fatalf("copied manifest:\n%s\nwant:\n%s", got, want)
 	}
 	if _, err := New(home, "mine", "p2p"); err == nil {
 		t.Fatal("new over an existing template: want refused")
+	}
+}
+
+// A manifest that names itself with `model:` gets `template:` and no other byte changes; one that
+// has `template:` is left alone; an unedited built-in so migrated is still tracked (the next
+// Unpack updates it), an edited one still is not.
+func TestMigrateKey(t *testing.T) {
+	home := t.TempDir()
+	v1 := fstest.MapFS{"sup.yaml": {Data: []byte("model: sup   # name\nroles: {a: {spawn: {model: small}}}\n")}}
+	if err := unpack(home, v1); err != nil {
+		t.Fatal(err)
+	}
+	mine := "# mine\nmodel: mine\nroles: {a: {}}\n"
+	done := "template: done\nroles: {a: {}}\n"
+	for name, text := range map[string]string{"mine": mine, "done": done} {
+		if err := os.MkdirAll(filepath.Join(Dir(home), name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(Dir(home), name, ManifestFile), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changed, err := MigrateKey(home)
+	if err != nil || len(changed) != 2 {
+		t.Fatalf("changed %v, %v; want sup and mine", changed, err)
+	}
+	read := func(name string) string {
+		b, _ := os.ReadFile(filepath.Join(Dir(home), name, ManifestFile))
+		return string(b)
+	}
+	if got := read("sup"); got != "template: sup   # name\nroles: {a: {spawn: {model: small}}}\n" {
+		t.Fatalf("sup: %q", got)
+	}
+	if got := read("mine"); got != "# mine\ntemplate: mine\nroles: {a: {}}\n" || read("done") != done {
+		t.Fatalf("mine %q, done %q", got, read("done"))
+	}
+	if again, err := MigrateKey(home); err != nil || len(again) != 0 {
+		t.Fatalf("second run changed %v, %v", again, err)
+	}
+	v2 := fstest.MapFS{"sup.yaml": {Data: []byte("template: sup\nsummary: v2\nroles: {a: {}}\n")}}
+	if err := unpack(home, v2); err != nil {
+		t.Fatal(err)
+	}
+	if got := read("sup"); !strings.Contains(got, "summary: v2") {
+		t.Fatalf("a migrated built-in was not updated: %q", got)
 	}
 }

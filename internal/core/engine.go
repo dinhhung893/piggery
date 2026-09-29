@@ -23,6 +23,8 @@ type txn struct {
 	ctx  context.Context
 	now  int64    // unix ms
 	solo manifest // the implicit manifest of a solo (teamManifest(""))
+	// shared is the Engine's sharedPrompts.
+	shared func(template, role string) string
 }
 
 // evt is one row for the events table.
@@ -49,7 +51,7 @@ func (e *Engine) inTx(ctx context.Context, fn func(t *txn) error) error {
 			return internal(err)
 		}
 		defer tx.Rollback()
-		if err := fn(&txn{Tx: tx, ctx: ctx, now: now, solo: e.soloManifest()}); err != nil {
+		if err := fn(&txn{Tx: tx, ctx: ctx, now: now, solo: e.soloManifest(), shared: e.sharedPrompts}); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -214,11 +216,12 @@ func isReserved(name string) bool {
 // ---- manifest ----
 
 type manifest struct {
-	Model   string              `yaml:"model"`
-	Summary string              `yaml:"summary"` // one line: when to use the template (templates action)
-	Roles   map[string]roleSpec `yaml:"roles"`
-	Routing []routeRule         `yaml:"routing"`
-	Limits  limitMap            `yaml:"limits"`
+	// Template is the template's name (a stored snapshot from before the rename has it as model:).
+	Template string              `yaml:"template"`
+	Summary  string              `yaml:"summary"` // one line: when to use the template (templates action)
+	Roles    map[string]roleSpec `yaml:"roles"`
+	Routing  []routeRule         `yaml:"routing"`
+	Limits   limitMap            `yaml:"limits"`
 	// AutoJoinRole is the role join.auto gives a session in a team with several roles.
 	AutoJoinRole string `yaml:"auto_join_role"`
 }
@@ -253,8 +256,15 @@ func parseManifest(text string) (manifest, error) {
 	if err := yaml.Unmarshal([]byte(text), &m); err != nil {
 		return m, errf(CodeInvalid, "manifest: %v", err)
 	}
-	if m.Model == "" {
-		return m, errf(CodeInvalid, "manifest: model is required")
+	if m.Template == "" { // a snapshot or a loose file from before the key was renamed
+		var old struct {
+			Model string `yaml:"model"`
+		}
+		_ = yaml.Unmarshal([]byte(text), &old)
+		m.Template = old.Model
+	}
+	if m.Template == "" {
+		return m, errf(CodeInvalid, "manifest: template is required (the template's name)")
 	}
 	if len(m.Roles) == 0 {
 		return m, errf(CodeInvalid, "manifest: at least one role is required")
@@ -397,7 +407,9 @@ func (t *txn) resolveInView(p participant, to, verb string) (participant, error)
 	return q, internal(err)
 }
 
-// label is the engine-stamped sender header as seen by reader.
+// label is the engine-stamped sender header as seen by reader: the sender's real role, and the
+// relation when the two are in a reports_to line ("supervisor, you report to them"; "executor,
+// reports to you"). Role names are the template's: the engine adds no words of its own for them.
 func label(reader, sender participant) string {
 	switch {
 	case sender.id == AddrEngine:
@@ -405,11 +417,9 @@ func label(reader, sender participant) string {
 	case sender.team == "":
 		return sender.name + " (solo)"
 	case reader.reportsTo != "" && reader.reportsTo == sender.id:
-		return sender.name + " (your lead)"
+		return sender.name + " (" + sender.role + ", you report to them)"
 	case sender.reportsTo != "" && sender.reportsTo == reader.id:
-		return sender.name + " (your report)"
-	case sender.role == reader.role:
-		return sender.name + " (your peer)"
+		return sender.name + " (" + sender.role + ", reports to you)"
 	default:
 		return sender.name + " (" + sender.role + ")"
 	}

@@ -40,6 +40,14 @@ func EnsureFiles(dir string) (filled []Filled, errs []error) {
 			filled = append(filled, Filled{p.Path, added})
 		}
 	}
+	// A template that still names itself with `model:` gets `template:` in its place, before its keys are filled.
+	if renamed, err := manifests.MigrateKey(dir); err != nil {
+		errs = append(errs, err)
+	} else if len(renamed) > 0 {
+		for _, p := range renamed {
+			filled = append(filled, Filled{p, []string{"template (was model)"}})
+		}
+	}
 	paths, _ := filepath.Glob(filepath.Join(manifests.Dir(dir), "*", manifests.ManifestFile))
 	for _, p := range paths {
 		if _, err := os.Stat(p); err != nil {

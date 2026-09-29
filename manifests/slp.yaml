@@ -5,7 +5,7 @@
 # something directly, and routing copies the Lead. Every role talks with `send`; routing is the
 # fence: a Peer reaches only the Lead, a Lead the Supervisor and its Peers. Handbacks, questions and
 # arguments are mail, with a kind where it helps. The Lead keeps the lane's plan on the board.
-model: slp
+template: slp
 summary: Lanes of work (code, research, writing, operations…) where the Human sets direction through a Supervisor, a Lead owns the plan and integration, and Peers own separate scopes and may question the premise.
 auto_join_role: supervisor   # the founder's role when a session founds a team from this template
 roles:

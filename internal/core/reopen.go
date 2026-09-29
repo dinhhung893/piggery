@@ -182,7 +182,7 @@ func (t *txn) oldGate(teamID string, m manifest) (g oldGateRow, ok bool, err err
 // member with its last state, the board pins, the gate's unacked mail, and how to go on.
 func (t *txn) reopenSummary(team string, gate participant, m manifest) (string, error) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Reopened team %s (template %s); you are %s (%s), its gate.\n", team, m.Model, gate.name, gate.role)
+	fmt.Fprintf(&b, "Reopened team %s (template %s); you are %s (%s), its gate.\n", team, m.Template, gate.name, gate.role)
 	rows, err := t.QueryContext(t.ctx, `SELECT name, COALESCE(role,''), COALESCE(mode,'')='headless', state, last_activity,
 		(SELECT COUNT(*) FROM messages WHERE to_id=participants.id AND acked_at IS NULL)
 		FROM participants WHERE team_id=? AND id<>? AND left_at IS NULL ORDER BY created_at, rowid`, gate.team, gate.id)

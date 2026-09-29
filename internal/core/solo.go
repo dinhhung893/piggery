@@ -21,7 +21,7 @@ func WithSoloTemplate(text string) Option {
 }
 
 func (e *Engine) soloManifest() manifest {
-	return manifest{Model: "solo", Roles: map[string]roleSpec{"": {Tools: soloTools}}, Limits: e.soloLimits}
+	return manifest{Template: "solo", Roles: map[string]roleSpec{"": {Tools: soloTools}}, Limits: e.soloLimits}
 }
 
 // soloCard is the role card of a solo.

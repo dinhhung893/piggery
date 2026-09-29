@@ -18,7 +18,7 @@ func TestState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	const man = "model: m\nauto_join_role: lead\nroles:\n  lead: {tools: [send, inbox, who, agent], can_spawn: [w]}\n" +
+	const man = "template: m\nauto_join_role: lead\nroles:\n  lead: {tools: [send, inbox, who, agent], can_spawn: [w]}\n" +
 		"  w: {tools: [send, inbox], spawn: {model: m-w}}\nrouting: [{from: lead, to: w, allow: true}]\n" +
 		"limits: {depth: 2, concurrency: 2, messages_per_participant_per_minute: 2}\n"
 	rt := &fakeRuntime{}
@@ -108,7 +108,7 @@ func TestListsAreInJoinOrder(t *testing.T) {
 	defer db.Close()
 	now := time.Now()
 	e := core.New(db, core.WithClock(func() time.Time { now = now.Add(time.Second); return now }))
-	team, err := e.TeamUp(ctx, core.TeamUpArgs{Manifest: "model: m\nroles: {peer: {tools: [send, who]}}\n", Cwd: t.TempDir()})
+	team, err := e.TeamUp(ctx, core.TeamUpArgs{Manifest: "template: m\nroles: {peer: {tools: [send, who]}}\n", Cwd: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
