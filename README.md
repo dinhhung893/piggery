@@ -19,7 +19,8 @@ flowchart LR
   a["agent on pi"] <-->|mail| farm
   b["agent on Claude Code"] <-->|mail| farm
   c["agent on …"] <-->|mail| farm
-  farm(("🐖 piggery<br/>mailbox + gate")) --- shape[["a team layout:<br/>roles, who talks to whom,<br/>who starts workers"]]
+  farm(("🐖 piggery<br/>mailbox + gate")) --- shape[["a team layout<br/>supervisor → workers<br/>peer ↔ peer<br/>…"]]
+  shape --> work[/"your tasks and projects,<br/>plowed"/]
 ```
 
 Every agent gets the same mailbox, whatever its harness: a pi session can mail a Claude Code
