@@ -60,14 +60,20 @@ piggery top                   # the same, live, with each one's context, turns a
 piggery tail w1 -n 50 -f      # a worker's log (or a session's transcript), readable; -f follows
 piggery abort w1              # cancel its current turn (like Esc); it stays alive
 piggery model w1 HP/kimi-k3   # its model from the next turn; --thinking high for the level
-piggery kill w1               # stop its process now
+piggery kill w1               # stop its process now (short: piggery x w1; in top: x, then y)
 piggery resume w1             # start a stopped worker again in its session
 piggery team down demo        # close a team: workers stopped, nothing is acked
 ```
 
 The target is a name or an id (`--team T` when a name is in several teams). `ps` and `top` only
-read. In `top`, a member's current task sits under its name: the latest mail marked as an
+read, except `x` in `top`. In `top`, a member's current task sits under its name: the latest mail marked as an
 assignment from whoever it reports to, and whether it handed back.
+
+**Emergency stop.** `x` in `top` on the selected worker (it asks `kill <name>? y/n` once), or
+`piggery x <worker>`, kills it: SIGKILL of the worker's process group. `piggery resume` brings it back
+in its session and its unacked mail is delivered again, so send it a note first if it must not redo
+the work. Processes that left the group (docker, `setsid`) survive. A session you opened is not a
+headless worker: `x` says so and does nothing; stop it in its own window (Esc).
 
 What works on which session (details in [reference.md](reference.md#harness-capabilities)):
 workers take every command above; a session you opened can be aborted on pi, omp and dsh, and its

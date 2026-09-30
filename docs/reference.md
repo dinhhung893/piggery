@@ -18,11 +18,11 @@ you (admin, read from `~/.piggery/admin.token`) and start the daemon if it is no
 | `team down <team>` | Close a team: workers stopped, nothing acked |
 | `template new <name> [--from <built-in>]` | Copy a built-in (default `p2p`) to `~/.piggery/templates/<name>` |
 | `ps [--json]` | Daemon, teams, members, solo sessions and pending mail, once |
-| `top` | The same, live, with context, turns and the latest events; `↑/↓` select, `enter` shows a tail |
+| `top` | The same, live, with context, turns and the latest events; `↑/↓` select, `enter` shows a tail, `x` kills the selected headless worker (asks once) |
 | `tail <worker> [-n N] [-f] [--team T]` | A worker's log or a session's transcript, readable; `--json` raw |
 | `log [--after SEQ] [--team T] [--limit N]` | Decisions and lifecycle events |
 | `abort <x> [--team T]` | Cancel x's current turn; it stays alive |
-| `kill <worker> [--team T]` | Kill a worker's process group now |
+| `kill <worker> [--team T]` (short: `x`) | Kill a worker's process group now (SIGKILL); `x` on the selected worker in `top` asks `kill <name>? y/n` and does the same |
 | `resume <worker> [--team T]` | Start a stopped worker again in its session, with its model, thinking level and harness |
 | `model <worker> [<provider/model>] [--thinking L] [--team T]` | Change a worker's model or thinking level now, or at its resume |
 | `release <msg_id>` | Deliver a message held by a limit |

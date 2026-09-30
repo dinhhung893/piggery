@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -336,7 +337,7 @@ func TestTopFooterShowsTheDaemonVersion(t *testing.T) {
 	if l := last(180); !strings.HasSuffix(l, "dev-daemon (cli dev-cli: piggery restart)") {
 		t.Fatalf("mismatch footer: %q", l)
 	}
-	if l := last(140); !strings.HasSuffix(l, "dev-daemon") || strings.Contains(l, "cli") {
+	if l := last(80); !strings.HasSuffix(l, "dev-daemon") || strings.Contains(l, "cli") {
 		t.Fatalf("mismatch footer, room for the version only: %q", l)
 	}
 	Version = "dev-daemon"
@@ -345,5 +346,98 @@ func TestTopFooterShowsTheDaemonVersion(t *testing.T) {
 	}
 	if l := last(30); strings.Contains(l, "dev-daemon") || strings.TrimSpace(l) == "" {
 		t.Fatalf("narrow footer: %q, want the key hints and no version", l)
+	}
+}
+
+// `x` asks once and `y` kills the selected headless worker (the same verb as `piggery kill`); any
+// other key cancels; a session or a stopped worker gets a reason and no question. `x` is also the
+// short name of the kill command.
+func TestTopKillKey(t *testing.T) {
+	ps := proto.PsResult{State: core.State{Teams: []core.TeamState{{ID: "ta", Name: "a", Members: []core.MemberState{
+		{ID: "s1", Name: "boss"}, {ID: "w1", Name: "w1", Headless: true, State: "working"}, {ID: "w2", Name: "w2", Headless: true, State: "gone"}}}}}}
+	var killedIDs []string
+	m := newTopModel(nil, "")
+	m.kill = func(id string) error { killedIDs = append(killedIDs, id); return nil }
+	m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	m.Update(fetched{ps: ps})
+	press := func(s string) tea.Cmd {
+		_, cmd := m.Update(tea.KeyPressMsg{Code: rune(s[0]), Text: s})
+		return cmd
+	}
+	frame := func() string { return regexp.MustCompile("\x1b\\[[0-9;]*m").ReplaceAllString(m.render(), "") }
+	m.sel = "w1"
+	press("x")
+	if !strings.Contains(frame(), "kill w1? y/n") {
+		t.Fatalf("no question:\n%s", frame())
+	}
+	if cmd := press("n"); cmd != nil || len(killedIDs) != 0 || strings.Contains(frame(), "y/n") {
+		t.Fatalf("another key: cmd %v, killed %v", cmd != nil, killedIDs)
+	}
+	press("x")
+	cmd := press("y")
+	if cmd == nil {
+		t.Fatal("y did not kill")
+	}
+	m.Update(cmd())
+	if !slices.Equal(killedIDs, []string{"w1"}) || !strings.Contains(frame(), "killed w1") {
+		t.Fatalf("killed %v:\n%s", killedIDs, frame())
+	}
+	for id, want := range map[string]string{"s1": "boss is not a headless worker: stop it in its own window (Esc)", "w2": "w2 is already stopped"} {
+		m.sel = id
+		press("x")
+		if !strings.Contains(frame(), want) || m.killing.id != "" {
+			t.Fatalf("%s: want %q:\n%s", id, want, frame())
+		}
+	}
+	if len(killedIDs) != 1 {
+		t.Fatalf("killed %v; only w1", killedIDs)
+	}
+	if c, _, err := (&env{}).root().Find([]string{"x", "w1"}); err != nil || c.Name() != "kill" {
+		t.Fatalf("x resolves to %v, %v; want kill", c, err)
+	}
+}
+
+// Events are a box like the Overview's (no column-name line) that `e` folds into one line of text
+// with the latest event; the keys are two lines with `x kill` on the second.
+func TestTopEventsBoxAndKeyLines(t *testing.T) {
+	sgr := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	now := time.Now().UnixMilli()
+	ev := func(typ, who string) core.Event { return core.Event{Ts: now - 120_000, Type: typ, Participant: who} }
+	m := newTopModel(nil, "")
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m.Update(fetched{ps: proto.PsResult{State: core.State{Teams: []core.TeamState{{ID: "ta", Name: "a", Members: []core.MemberState{
+		{ID: "a1", Name: "a1", Role: "executor", State: "idle"}}}}, Events: []core.Event{ev("spawned", "a1"), ev("handback", "a1")}}}})
+	lines := func() []string { return strings.Split(sgr.ReplaceAllString(m.render(), ""), "\n") }
+
+	got := lines()
+	i := len(got) - 1
+	for i >= 0 && !strings.HasPrefix(got[i], "┌─ Events") {
+		i--
+	}
+	if i < 0 || strings.Contains(strings.Join(got, "\n"), "TIME") || !strings.Contains(got[i+1], "handback") {
+		t.Fatalf("open events = %q; want a box, newest first, no column names", got[i:])
+	}
+	keys := got[len(got)-2:]
+	if !strings.Contains(keys[0], "enter details") || !strings.Contains(keys[1], "x kill") || !strings.HasPrefix(got[len(got)-3], "────") {
+		t.Fatalf("key lines = %q; want a rule, then move and look, then act and toggle", got[len(got)-3:])
+	}
+	// The two key lines are one grid: the i-th entries start at the same cell.
+	for _, pair := range [][2]string{{"←/→ tab", "e events"}, {"enter details", "m mouse"}, {"esc back", "? all keys"}} {
+		if a, b := strings.Index(keys[0], pair[0]), strings.Index(keys[1], pair[1]); lipgloss.Width(keys[0][:a]) != lipgloss.Width(keys[1][:b]) {
+			t.Fatalf("key lines = %q; want %q above %q", keys, pair[0], pair[1])
+		}
+	}
+
+	m.Update(fetched{ps: proto.PsResult{}})
+	if got = lines(); !strings.Contains(got[len(got)-5], "No events yet.") {
+		t.Fatalf("no events = %q; want the empty-state line", got[len(got)-6:])
+	}
+	m.Update(fetched{ps: proto.PsResult{State: core.State{Events: []core.Event{ev("handback", "a1")}}}})
+	m.Update(tea.KeyPressMsg{Code: 'e', Text: "e"})
+	got = lines()
+	folded := got[len(got)-4]
+	if !strings.HasPrefix(folded, " ● Events · ") || !strings.Contains(folded, "handback") || strings.Contains(folded, "─") ||
+		strings.Contains(strings.Join(got, "\n"), "┌─ Events") {
+		t.Fatalf("collapsed events = %q; want one line of text with the latest event, no rule", folded)
 	}
 }

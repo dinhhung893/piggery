@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/exp/charmtone"
 
@@ -227,12 +228,15 @@ func (m *topModel) render() string {
 	if tabs := m.tabs(); len(tabs) > 1 {
 		head = append(head, cut.Render(m.tabBar(tabs, len(head))))
 	}
-	var foot []string
-	if m.events {
-		foot = m.eventLines(width, height, now)
+	foot := m.eventsBox(width, height, now)
+	if m.killing.id != "" { // the one question, above the keys
+		foot = append(foot, " "+lipgloss.NewStyle().Foreground(colWarning).Bold(true).Render("kill "+m.killing.name+"? y/n"))
+	} else if m.killNote != "" {
+		foot = append(foot, " "+lipgloss.NewStyle().Foreground(colWarning).Render(truncate(m.killNote, width-2)))
 	}
 	m.help.SetWidth(width - 2)
-	for _, l := range strings.Split(m.help.View(m.keys), "\n") {
+	foot = append(foot, stRule.Render(strings.Repeat("─", width))) // mirrors the rule under the header
+	for _, l := range m.keyLines(width - 2) {
 		foot = append(foot, " "+l)
 	}
 	notes, mismatch := versionNotes(m.ps.Version, Version)
@@ -711,9 +715,9 @@ func wrapTwo(s string, n int) []string {
 	return []string{strings.TrimSpace(s[:at]), truncate(strings.TrimSpace(s[at:]), n)}
 }
 
-// eventLines is the latest events, newest first (3 in a short window, 5, or 8 in a tall one):
-// muted; denied and held amber, exited and gone red. Nothing when there are none.
-func (m *topModel) eventLines(width, height int, now time.Time) []string {
+// eventRows are the latest events, newest first (n of them), as cells (time, who, event, target)
+// with the event's type.
+func (m *topModel) eventRows(n int, now time.Time) (rows [][]string, types []string) {
 	names := m.names()
 	name := func(id string) string {
 		if n := names[id]; n != "" || len(id) <= 6 {
@@ -721,15 +725,6 @@ func (m *topModel) eventLines(width, height int, now time.Time) []string {
 		}
 		return id[len(id)-6:]
 	}
-	n := 8
-	switch {
-	case height < 30:
-		n = 3
-	case height < 40:
-		n = 5
-	}
-	var rows [][]string
-	var types []string
 	for i := len(m.ps.Events) - 1; i >= 0 && len(rows) < n; i-- {
 		ev := m.ps.Events[i]
 		target := ""
@@ -739,22 +734,51 @@ func (m *topModel) eventLines(width, height int, now time.Time) []string {
 		rows = append(rows, []string{ago(ev.Ts, now), name(ev.Participant), ev.Type, target})
 		types = append(types, ev.Type)
 	}
-	if len(rows) == 0 {
-		return nil
+	return rows, types
+}
+
+// eventStyle is an event row's colour: muted, amber for a refusal, red for an exit.
+func eventStyle(typ string) lipgloss.Style {
+	switch typ {
+	case "denied", "held":
+		return lipgloss.NewStyle().Foreground(colWarning)
+	case "exited", "gone":
+		return lipgloss.NewStyle().Foreground(colError)
 	}
-	w := fitCols(eventCols, rows, width-2, eventFit)
-	out := []string{row(eventCols, w, nil, func(int) lipgloss.Style { return stMuted }, false, width)}
-	for i, r := range rows {
-		st := stMuted
-		switch types[i] {
-		case "denied", "held":
-			st = lipgloss.NewStyle().Foreground(colWarning)
-		case "exited", "gone":
-			st = lipgloss.NewStyle().Foreground(colError)
+	return stMuted
+}
+
+// eventsBox is the latest events in a box like the Overview's (3 rows in a short window, 5, or 8 in
+// a tall one), or, collapsed, one rule line with the title and the latest event.
+func (m *topModel) eventsBox(width, height int, now time.Time) []string {
+	n := 8
+	switch {
+	case height < 30:
+		n = 3
+	case height < 40:
+		n = 5
+	}
+	if !m.events { // folded: one line of text, no rule, indented like the key lines
+		rows, types := m.eventRows(1, now)
+		line := " " + stTitle.Render("● Events")
+		if len(rows) > 0 {
+			latest := truncate(strings.TrimSpace(strings.Join(rows[0], " ")), max(width-lipgloss.Width(" ● Events · "), 0))
+			line += stRule.Render(" · ") + eventStyle(types[0]).Render(latest)
 		}
-		out = append(out, row(r, w, map[int]bool{0: true}, func(int) lipgloss.Style { return st }, false, width))
+		return []string{line}
 	}
-	return out
+	rows, types := m.eventRows(n, now)
+	inner := width - 2
+	w := fitCols(eventCols, rows, inner-3, eventFit)
+	lines := make([]string, len(rows))
+	if len(rows) == 0 {
+		lines = []string{" " + stMuted.Render("No events yet.")}
+	}
+	for i, r := range rows {
+		st := eventStyle(types[i])
+		lines[i] = row(r, w, map[int]bool{0: true}, func(int) lipgloss.Style { return st }, false, inner)
+	}
+	return box(stTitle.Render("Events"), lines, width, max(len(rows), 1)+2)
 }
 
 // styleTail colors a tail line (tailLine's forms) cut to n cells: tool calls secondary with
@@ -869,4 +893,44 @@ func withVersion(line string, notes []string, mismatch bool, width int) string {
 		}
 	}
 	return line
+}
+
+// keyLines is the key footer: two lines by purpose (move and look, act and toggle), or the full
+// list under `?`.
+func (m *topModel) keyLines(w int) []string {
+	if m.help.ShowAll {
+		return strings.Split(m.help.View(m.keys), "\n")
+	}
+	return keyGrid(w, m.keys.look(), m.keys.act())
+}
+
+// keyGrid lays the short key lines out as columns: the i-th entry of every line starts at the
+// same cell, so the lines read as one block. Keys muted, descriptions subtle, as helpStyles; each
+// line is cut to w.
+func keyGrid(w int, lines ...[]key.Binding) []string {
+	cell := func(b key.Binding) string { return b.Help().Key + " " + b.Help().Desc }
+	var cols []int
+	for _, l := range lines {
+		for i, b := range l {
+			if i == len(cols) {
+				cols = append(cols, 0)
+			}
+			cols[i] = max(cols[i], lipgloss.Width(cell(b)))
+		}
+	}
+	out := make([]string, len(lines))
+	for li, l := range lines {
+		var b strings.Builder
+		for i, k := range l {
+			if i > 0 {
+				b.WriteString("   ")
+			}
+			b.WriteString(stMuted.Render(k.Help().Key) + " " + stRule.Render(k.Help().Desc))
+			if i < len(l)-1 {
+				b.WriteString(strings.Repeat(" ", cols[i]-lipgloss.Width(cell(k))))
+			}
+		}
+		out[li] = lipgloss.NewStyle().MaxWidth(w).Render(b.String())
+	}
+	return out
 }

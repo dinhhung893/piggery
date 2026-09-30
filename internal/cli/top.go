@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,6 +48,15 @@ func (e *env) top(args []string) error {
 	usePalette(lipgloss.HasDarkBackground(os.Stdin, f)) // as fang decides for --help
 	tm := newTopModel(c, e.dir)
 	tm.cols = cols
+	tm.kill = func(id string) error { // its own connection: the model's is busy with the next fetch
+		kc, err := e.connect()
+		if err != nil {
+			return err
+		}
+		defer kc.Close()
+		_, err = kc.CallInto(proto.VerbKill, core.AdminTarget{Target: id}, &core.AgentResult{})
+		return err
+	}
 	m, err := tea.NewProgram(tm, tea.WithOutput(f)).Run()
 	if err != nil {
 		return err
@@ -82,6 +92,20 @@ type topModel struct {
 	help    help.Model
 	w, h    int
 	err     error // a daemon error ends top with it
+
+	sized    bool                  // the first window size has arrived
+	kill     func(id string) error // kills a worker (the same verb as `piggery kill`, on a connection of its own)
+	killing  killAsk               // the worker `x` asked about, until y or another key
+	killNote string                // the answer to the last `x`, until the next key
+}
+
+// killAsk is the worker `x` is asking to kill.
+type killAsk struct{ id, name string }
+
+// killed is the result of a kill.
+type killed struct {
+	name string
+	err  error
 }
 
 const (
@@ -95,6 +119,7 @@ const (
 func newTopModel(c *Client, dir string) *topModel {
 	h := help.New()
 	h.Styles = helpStyles()
+	h.ShortSeparator = "   "
 	// Its first read starts from what ps --json last read (logcache.go), not from the start of each log.
 	return &topModel{c: c, dir: dir, side: true, events: true, mouse: true, open: map[string]bool{}, keys: newTopKeys(), help: h,
 		cols: server.DisplayColumns, logs: loadLogCache(dir)}
@@ -102,7 +127,7 @@ func newTopModel(c *Client, dir string) *topModel {
 
 // topKeys are top's keys; the footer shows the short list, ? the full one.
 type topKeys struct {
-	Next, Prev, Up, Down, Preview, Pane, Close, Events, Mouse, Help, Quit key.Binding
+	Next, Prev, Up, Down, Preview, Pane, Close, Events, Mouse, Kill, Help, Quit key.Binding
 }
 
 func newTopKeys() topKeys {
@@ -119,17 +144,29 @@ func newTopKeys() topKeys {
 		Close:   b([]string{"esc"}, "esc", "back"),
 		Events:  b([]string{"e"}, "e", "events"),
 		Mouse:   b([]string{"m"}, "m", "mouse/select text"),
+		Kill:    b([]string{"x"}, "x", "kill worker"),
 		Help:    b([]string{"?"}, "?", "help"),
 		Quit:    b([]string{"q", "ctrl+c"}, "q", "quit"),
 	}
 }
 
-func (k topKeys) ShortHelp() []key.Binding {
-	return []key.Binding{k.Help, k.Next, k.Down, k.Preview, k.Close, k.Pane, k.Events, k.Mouse, k.Quit}
+func (k topKeys) ShortHelp() []key.Binding { return append(k.look(), k.act()...) }
+
+// look is the footer's first line: move and look. act is the second: act and toggle, with the short
+// names of the keys whose full list entry is longer.
+func (k topKeys) look() []key.Binding {
+	return []key.Binding{k.Down, k.Next, k.Preview, k.Close, k.Pane}
+}
+
+func (k topKeys) act() []key.Binding {
+	mouse := key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mouse"))
+	all := key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "all keys"))
+	kill := key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "kill"))
+	return []key.Binding{kill, k.Events, mouse, all, k.Quit}
 }
 
 func (k topKeys) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Next, k.Prev}, {k.Down}, {k.Preview, k.Pane, k.Close}, {k.Events, k.Mouse, k.Help, k.Quit}}
+	return [][]key.Binding{{k.Next, k.Prev}, {k.Down}, {k.Preview, k.Pane, k.Close}, {k.Events, k.Mouse, k.Kill, k.Help, k.Quit}}
 }
 
 // tailState follows one log incrementally: a worker's run log or a session's transcript.
@@ -229,9 +266,28 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
+		if !m.sized { // a short window starts with the events collapsed; `e` is the user's after that
+			m.sized, m.events = true, msg.Height >= 30
+		}
+	case killed:
+		m.killNote = "killed " + msg.name
+		if msg.err != nil {
+			m.killNote = "kill " + msg.name + ": " + msg.err.Error()
+		}
 	case tea.KeyPressMsg:
 		k := m.keys
+		if ask := m.killing; ask.id != "" { // asked once: y kills, any other key cancels
+			m.killing = killAsk{}
+			if msg.String() == "y" {
+				return m, m.killCmd(ask)
+			}
+			m.killNote = ""
+			return m, nil
+		}
+		m.killNote = ""
 		switch {
+		case key.Matches(msg, k.Kill):
+			m.askKill()
 		case key.Matches(msg, k.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, k.Next):
@@ -666,4 +722,42 @@ func (m *topModel) names() map[string]string {
 		out[s.ID] = s.Name
 	}
 	return out
+}
+
+// askKill is `x`: ask to kill the selected worker, or say why it cannot be.
+func (m *topModel) askKill() {
+	for _, t := range teamsOf(m.ps) {
+		for _, mem := range t.Members {
+			if mem.ID != m.sel {
+				continue
+			}
+			switch {
+			case !mem.Headless:
+				m.killNote = mem.Name + " is not a headless worker: stop it in its own window (Esc)"
+			case mem.State == "gone":
+				m.killNote = mem.Name + " is already stopped"
+			default:
+				m.killing = killAsk{id: mem.ID, name: mem.Name}
+			}
+			return
+		}
+	}
+	name := "this row"
+	for _, s := range m.ps.Solos {
+		if s.ID == m.sel {
+			name = s.Name
+		}
+	}
+	m.killNote = name + " is not a headless worker: stop it in its own window (Esc)"
+}
+
+// killCmd kills ask's worker in the background and reports the result as a killed message.
+func (m *topModel) killCmd(ask killAsk) tea.Cmd {
+	kill := m.kill
+	return func() tea.Msg {
+		if kill == nil {
+			return killed{ask.name, errors.New("no connection")}
+		}
+		return killed{ask.name, kill(ask.id)}
+	}
 }

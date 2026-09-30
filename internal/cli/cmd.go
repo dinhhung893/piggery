@@ -171,8 +171,8 @@ func (e *env) root() *cobra.Command {
 			"piggery log --after 100 --limit 50", authAdmin, e.logCmd),
 		e.cmd("abort <x> [--team T]", "Cancel x's current turn; it stays alive", grpStepIn,
 			"piggery abort w1", authAdmin, e.abort),
-		e.cmd("kill <worker> [--team T]", "Kill a headless worker's process group now (SIGKILL)", grpStepIn,
-			"piggery kill w1", authAdmin, e.killCmd),
+		alias(e.cmd("kill <worker> [--team T]", "Kill a headless worker's process group now (SIGKILL); x is the short form", grpStepIn,
+			"piggery kill w1\npiggery x w1", authAdmin, e.killCmd), "x"),
 		e.cmd("resume <worker> [--team T]", "Start a stopped worker again in its session (its model, thinking, harness)", grpStepIn,
 			"piggery resume w1", authAdmin, e.resumeCmd),
 		e.cmd("model <worker> [<provider/model>] [--thinking L] [--team T]", "Switch a worker's model or thinking level now, or at its resume", grpStepIn,
@@ -295,4 +295,10 @@ func (e *env) watch(args []string) error {
 		return simple(e, "watch list", args[1:], proto.VerbWatchList, printTimers)
 	}
 	return fmt.Errorf("%w: watch add|list", errUsage)
+}
+
+// alias gives c another name.
+func alias(c *cobra.Command, names ...string) *cobra.Command {
+	c.Aliases = names
+	return c
 }

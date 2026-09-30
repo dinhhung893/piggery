@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.1 - 2026-09-30
+
+An emergency stop in `piggery top` (`x` kills the selected worker) and a tidier bottom of the screen.
+
+- Emergency stop: `x` in `piggery top` kills the selected headless worker (it asks `kill <name>? y/n`
+  once; a session you opened gets a reason and nothing else), and `piggery x <worker>` is the short
+  form of `piggery kill`.
+- `piggery top`: events in a box that `e` folds to one line (`● Events · <latest>`; it starts folded
+  under 30 rows), and the keys on two aligned lines under a rule.
+
 ## v0.5.0 - 2026-09-30
 
 `piggery setup --outdated` brings what piggery installed for your harnesses up to date, and user docs
