@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { piggeryPath } from "../server/installed.ts";
-import { pickBin, realDir, runPiggery } from "../server/piggery.ts";
+import { outdatedNotice, pickBin, realDir, runPiggery } from "../server/piggery.ts";
 import { RPC_NAMES } from "../shared/rpc.ts";
-import { farm, latestEvents, tailLines, tokens, type Ps } from "../shared/view.ts";
+import { farm, latestEvents, summary, tailLines, tokens, type Ps } from "../shared/view.ts";
 
 // A real `piggery ps --json`, paths made neutral.
 const ps = JSON.parse(readFileSync(new URL("./fixtures/ps.json", import.meta.url), "utf8")) as Ps;
@@ -77,6 +77,47 @@ test("ctx, turns, thinking and recently closed teams come from ps --json as top 
   assert.deepEqual([open.rows[0].ctx, open.rows[0].turns], ["", ""]);
   assert.deepEqual([closed.kind, closed.title, closed.closedBy, closed.rows.map((r) => [r.name, r.dim])], ["closed", "old", "boss", [["gone-lead", true]]]);
   assert.deepEqual([tokens(950), tokens(12345), tokens(2_500_000)], ["950", "12.3k", "2.5M"]);
+});
+
+test("a session with a transcript has a tail and ctx/turns as top does; a member's task and the header come from ps --json", () => {
+  const team = ps.teams![0];
+  const [lead, w1] = team.members;
+  const solo = ps.solos![0];
+  const task = { seq: 175, title: "fix the store", from: "pi-1366de", at: 5, latest: { seq: 180, at: 6, by_member: true }, newer: { seq: 182, title: "a note", at: 7 } };
+  const withSessions: Ps = {
+    ...ps,
+    started_at: 1,
+    version: "dev-abc",
+    held: 2,
+    unacked: 3,
+    solos: [{ ...solo, transcript: { path: "/s/a.jsonl", format: "claude" } }, ...ps.solos!.slice(1)],
+    teams: [
+      {
+        ...team,
+        members: [
+          { ...lead, transcript: { path: "/s/lead.jsonl", format: "pi" }, capabilities: ["wake", "steer"] },
+          { ...w1, capabilities: ["usage"], assignment: task },
+          ...team.members.slice(2),
+        ],
+      },
+    ],
+    projects: [
+      { ...ps.projects![0], units: [{ ...ps.projects![0].units[0], ctx: 900, turns: 4 }, ps.projects![0].units[1]] },
+      {
+        ...ps.projects![1],
+        units: [{ ...ps.projects![1].units[0], members: ps.projects![1].units[0].members!.map((m) => (m.id === lead.id ? { ...m, ctx: 12345, turns: 9 } : m)) }],
+      },
+    ],
+  };
+  const [shop, api] = farm(withSessions);
+  const [s1, s2] = shop.units.map((u) => u.rows[0]);
+  assert.deepEqual([s1.tailable, s1.hasStats, s1.ctx, s1.turns], [true, true, "900", "4"]);
+  assert.deepEqual([s2.tailable, s2.hasStats], [false, false], "no transcript, no log: a clear empty state");
+  const [l, w, w2] = api.units[0].rows;
+  assert.deepEqual([l.logged, l.tailable, l.hasStats, l.ctx, l.task], [false, true, true, "12.3k", null]);
+  assert.deepEqual([w.logged, w.tailable, w.task], [true, true, task]);
+  assert.deepEqual([w2.logged, w2.tailable, w2.hasStats], [true, true, false], "a worker that declared no capabilities is judged by being headless");
+  assert.deepEqual(summary(withSessions), { startedAt: 1, version: "dev-abc", teams: 1, working: 0, idle: 2, held: 2, unacked: 3 }, "the two solos are idle; the team is all gone");
 });
 
 test("events are top's: newest first, who and target by name, denied/held and exited/gone coloured", () => {
@@ -152,6 +193,15 @@ test("runPiggery always passes --no-start and says why piggery gave nothing", as
   const slow = await runPiggery(fake("slow", "sleep 5"), ["ps"], 200);
   assert.equal(slow.ok || slow.code, "failed");
   assert.match(slow.ok ? "" : slow.error, /did not answer/);
+});
+
+test("the outdated notice is built from ps --json's list, and spawns nothing", () => {
+  assert.equal(outdatedNotice({}), "", "an older piggery reports no list");
+  assert.equal(outdatedNotice({ outdated: [] }), "");
+  assert.equal(
+    outdatedNotice({ outdated: [{ name: "codex", have: 0, want: 1 }, { name: "claude", have: 1, want: 1, drift: "6 of 7 hooks" }, { name: 3 }] }),
+    "outdated: codex (v0 < v1), claude (v1: 6 of 7 hooks): piggery setup --outdated",
+  );
 });
 
 test("the binary is the user's setting, else the one setup installed, else piggery on PATH", () => {

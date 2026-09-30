@@ -34,6 +34,11 @@ func (e *env) ps(args []string) error {
 	return do(e, proto.VerbPs, core.StateArgs{}, func(w io.Writer, r proto.PsResult) {
 		for _, l := range psLines(r, time.Now(), nil, cols) {
 			fmt.Fprintln(w, l.text)
+			if l.kind == "daemon" { // the header: the daemon's line, then what setup has to bring up
+				if n := proto.Notice(r.Outdated); n != "" {
+					fmt.Fprintln(w, n)
+				}
+			}
 		}
 	})
 }

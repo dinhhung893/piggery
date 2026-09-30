@@ -92,7 +92,7 @@ jobs:
       - name: Release notes
         # The tag's section of CHANGELOG.md: from "## <tag> " up to the next "## ".
         run: |
-          awk -v h="## ${GITHUB_REF_NAME} " 'index($0, h) == 1 {f = 1; next} f && /^## / {exit} f' CHANGELOG.md > notes.md
+          awk -v h="## ${GITHUB_REF_NAME} " 'index($0, h) == 1 {f = 1; next} f && /^## / {exit} f && (s || NF) {s = 1; print}' CHANGELOG.md > notes.md
           test -s notes.md || { echo "CHANGELOG.md has no section for ${GITHUB_REF_NAME}"; exit 1; }
       - name: Checksums
         run: cd dist && sha256sum piggery-* > checksums.txt

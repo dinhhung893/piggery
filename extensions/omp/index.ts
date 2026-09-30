@@ -356,7 +356,7 @@ export default function piggery(omp: ExtensionAPI) {
 		await new Promise<void>((resolve, reject) => {
 			const d = spawn("piggery", ["serve"], { detached: true, stdio: ["ignore", out, out] });
 			d.on("error", (e: any) =>
-				reject(new Error(e.code === "ENOENT" ? "the piggery binary is not on PATH (see docs/USAGE.md)" : e.message)),
+				reject(new Error(e.code === "ENOENT" ? "the piggery binary is not on PATH (see https://github.com/sting8k/piggery/blob/main/docs/guide.md)" : e.message)),
 			);
 			d.on("exit", () => (exited = true));
 			d.on("spawn", () => {

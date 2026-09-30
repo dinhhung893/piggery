@@ -6,6 +6,24 @@
 /** The ps --json protocol_version this plugin was written against; another one is shown, not refused. */
 export const PROTOCOL_VERSION = 1;
 
+/** A member's current task: the latest mail marked `op: assign` to it, and how its reply chain stands. */
+export interface Assignment {
+  seq: number;
+  title: string;
+  from: string;
+  at: number;
+  /** The newest mail of the chain when it is not the assignment itself: by the member = handed back, else a rework. */
+  latest?: { seq: number; at: number; by_member: boolean } | null;
+  /** The assigner's newer mail outside the chain (a note, or a task sent without the op). */
+  newer?: { seq: number; title: string; at: number } | null;
+}
+
+/** A session's own transcript, as its adapter reported it; `piggery tail` reads it. */
+export interface Transcript {
+  path: string;
+  format: string;
+}
+
 export interface Member {
   id: string;
   name: string;
@@ -24,6 +42,10 @@ export interface Member {
   reports_to?: string;
   spawned_by?: string;
   cwd?: string;
+  /** What its harness supports; "usage" means a driver log with ctx, turns and a tail. null: not declared. */
+  capabilities?: string[] | null;
+  transcript?: Transcript | null;
+  assignment?: Assignment | null;
 }
 
 export interface Team {
@@ -36,7 +58,7 @@ export interface Team {
   members: Member[];
 }
 
-export type Solo = Omit<Member, "role" | "headless" | "gate" | "reports_to" | "spawned_by" | "last_turn_end" | "thinking">;
+export type Solo = Omit<Member, "role" | "headless" | "gate" | "reports_to" | "spawned_by" | "last_turn_end" | "thinking" | "assignment" | "capabilities">;
 
 /** A team top lists as closed: the daemon's closed[] entry. */
 export interface ClosedTeam extends Team {
@@ -73,6 +95,11 @@ export interface Event {
 
 export interface Ps {
   protocol_version?: number;
+  /** The daemon's start (unix ms), build version, and the mail counts top's header shows. */
+  started_at?: number;
+  version?: string;
+  held?: number;
+  unacked?: number;
   teams?: Team[] | null;
   closed?: ClosedTeam[] | null;
   solos?: Solo[] | null;
@@ -134,8 +161,14 @@ export interface Row {
   reports: string;
   /** Where it runs: the team's root, or the solo's directory. */
   root: string;
-  /** A headless worker, whose driver log piggery tails; a session has none. */
+  /** Its harness keeps a driver log with ctx, turns and a tail (top's `logged`). */
   logged: boolean;
+  /** Piggery has a log of it to tail, as top's `tailable`: a driver log, or the session's transcript. */
+  tailable: boolean;
+  /** Piggery read ctx and turns for it (ps --json gave a turns count), even when ctx is not known yet. */
+  hasStats: boolean;
+  /** Its current task; null for a solo, or a member with none. */
+  task: Assignment | null;
 }
 
 export interface UnitView {
@@ -178,6 +211,11 @@ export function modelId(model: string | undefined): string {
   if (!model) return "";
   const slash = model.indexOf("/");
   return slash < 0 ? model : model.slice(slash + 1);
+}
+
+/** As top's `logged`: the harness declares usage; a member that declared none is judged by being headless. */
+function logged(m: Member): boolean {
+  return m.capabilities ? m.capabilities.includes("usage") : m.headless === true;
 }
 
 function harnessLabel(harness: string | undefined, headless: boolean | undefined): string {
@@ -245,6 +283,9 @@ export function farm(ps: Ps, dir?: string): ProjectView[] {
           reports: "",
           root: s.cwd ?? project.path,
           logged: false,
+          tailable: !!s.transcript?.path,
+          hasStats: unit.turns !== undefined,
+          task: null,
         };
         units.push({ kind: "solo", id: s.id, title: null, gate: "", held: 0, open: false, rows: [row] });
         continue;
@@ -283,7 +324,10 @@ export function farm(ps: Ps, dir?: string): ProjectView[] {
             came,
             reports: m.reports_to ? (name.get(m.reports_to) ?? "") : "",
             root: team.root ?? project.path,
-            logged: m.headless === true,
+            logged: logged(m),
+            tailable: logged(m) || !!m.transcript?.path,
+            hasStats: place.turns !== undefined,
+            task: m.assignment ?? null,
           },
         ];
       });
@@ -320,6 +364,29 @@ function names(ps: Ps): Map<string, string> {
   }
   for (const s of ps.solos ?? []) out.set(s.id, s.name);
   return out;
+}
+
+/** top's header: the daemon's age and version, team count, working and idle members and sessions, mail counts. */
+export interface Summary {
+  startedAt?: number;
+  version: string;
+  teams: number;
+  working: number;
+  idle: number;
+  held: number;
+  unacked: number;
+}
+
+export function summary(ps: Ps): Summary {
+  let working = 0;
+  let idle = 0;
+  const count = (state: string) => {
+    if (state === "working") working++;
+    else if (state === "idle") idle++;
+  };
+  for (const t of ps.teams ?? []) for (const m of t.members) count(m.state);
+  for (const s of ps.solos ?? []) count(s.state);
+  return { startedAt: ps.started_at, version: ps.version ?? "", teams: (ps.teams ?? []).length, working, idle, held: ps.held ?? 0, unacked: ps.unacked ?? 0 };
 }
 
 export type Tone = "muted" | "warning" | "danger";

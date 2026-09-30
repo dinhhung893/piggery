@@ -9,12 +9,13 @@ const Failure = z.object({ ok: z.literal(false), code: z.enum(["missing", "down"
 /**
  * `piggery ps --json`, passed through as piggery wrote it (shared/view.ts reads it). With a workspace
  * `dir`, also that directory as piggery records paths (symlinks resolved, e.g. macOS's /tmp is a
- * symlink), which only the daemon side can work out.
+ * symlink), which only the daemon side can work out. `outdated` is the notice built from the
+ * `outdated` list in that ps result (installs that need `piggery setup --outdated`), "" when none.
  */
 export const snapshot = defineRpc({
   name: "piggery.snapshot",
   input: z.object({ dir: z.string().optional() }),
-  output: z.union([z.object({ ok: z.literal(true), ps: z.record(z.string(), z.unknown()), dir: z.string().optional() }), Failure]),
+  output: z.union([z.object({ ok: z.literal(true), ps: z.record(z.string(), z.unknown()), dir: z.string().optional(), outdated: z.string().optional() }), Failure]),
 });
 
 /** The last lines of one participant's session as `piggery tail` prints them. */

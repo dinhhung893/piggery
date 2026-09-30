@@ -72,4 +72,4 @@ case ":$PATH:" in
 *) echo "piggery install: $dir is not on your PATH; add this to your shell profile:
   export PATH=\"$dir:\$PATH\"" ;;
 esac
-echo "Next: piggery setup pi (or claude, codex)"
+echo "Next: on a new machine, piggery setup <harness> (pi, claude, codex, omp, dsh or paseo); upgrading, piggery setup --outdated"

@@ -13,13 +13,14 @@ import (
 )
 
 // The omp extension is one tree in two places (the Human's and a worker's), written from the binary
-// and marked with its version: the layout has the manifest, the entry and the shared pi files (the
-// same bytes as extensions/pi), a current copy is not rewritten, an older one is updated and a
-// newer one left, a directory that is not piggery's is never replaced or removed, and a worker gets
-// the entry to pass to `omp -e`.
+// and marked with its integration version: the layout has the manifest, the entry and the shared pi
+// files (the same bytes as extensions/pi), a current copy is not rewritten, and neither is one at
+// the same integer (a rebuild); one with a lower integer, or a build-version marker from before
+// the integers, is updated once; a directory that is not piggery's is never replaced or removed,
+// and a worker gets the entry to pass to `omp -e`.
 func TestOmpExtCopy(t *testing.T) {
 	ext := filepath.Join(t.TempDir(), "extensions", "piggery")
-	if wrote, err := InstallOmpExt(ext, "v1.2.0"); err != nil || !wrote {
+	if wrote, err := InstallOmpExt(ext); err != nil || !wrote {
 		t.Fatalf("install: %v, %v", wrote, err)
 	}
 	for name, want := range map[string]string{"pi/adapter.mjs": "adapter.mjs", "pi/client.mjs": "client.mjs", "pi/render.mjs": "render.mjs", "pi/tools.json": "tools.json"} {
@@ -33,17 +34,25 @@ func TestOmpExtCopy(t *testing.T) {
 		!strings.Contains(string(b), `"./omp/index.ts"`) {
 		t.Errorf("package.json = %s", b)
 	}
-	if v, ok := OmpExtVersion(ext); !ok || v != "v1.2.0" || !OmpExtCurrent(ext, "v1.2.0") {
-		t.Fatalf("version %q managed %v", v, ok)
+	if v, ok := OmpExtVersion(ext); !ok || v != IntegrationVersion("omp") || !OmpExtCurrent(ext) {
+		t.Fatalf("version %d managed %v", v, ok)
 	}
-	if wrote, err := InstallOmpExt(ext, "v1.2.0"); err != nil || wrote {
+	if wrote, err := InstallOmpExt(ext); err != nil || wrote {
 		t.Fatalf("second install wrote again: %v, %v", wrote, err)
 	}
-	if up, _ := UpdateOmpExt(ext, "v1.1.0"); up {
-		t.Fatal("an older binary updated a newer copy")
+	entryFile := filepath.Join(ext, "omp", "index.ts")
+	cur, _ := os.ReadFile(entryFile)
+	os.WriteFile(entryFile, append(cur, "// edited\n"...), 0o644)
+	if up, _ := UpdateOmpExt(ext); up {
+		t.Fatal("a copy at this binary's integer was rewritten (a rebuild does not change it)")
 	}
-	if up, err := UpdateOmpExt(ext, "v1.3.0"); err != nil || !up || !OmpExtCurrent(ext, "v1.3.0") {
-		t.Fatalf("newer binary: updated %v, %v", up, err)
+	_, rest, _ := strings.Cut(string(cur), "\n")
+	os.WriteFile(entryFile, []byte("// managed by piggery v0.3.0: written by `piggery setup omp`\n"+rest), 0o644)
+	if v, _ := OmpExtVersion(ext); v != 0 {
+		t.Fatalf("a build-version marker reads as v%d, want v0", v)
+	}
+	if up, err := UpdateOmpExt(ext); err != nil || !up || !OmpExtCurrent(ext) {
+		t.Fatalf("outdated copy: updated %v, %v", up, err)
 	}
 	if removed, err := RemoveOmpExt(ext); err != nil || !removed {
 		t.Fatalf("remove: %v, %v", removed, err)
@@ -56,7 +65,7 @@ func TestOmpExtCopy(t *testing.T) {
 	other := filepath.Join(t.TempDir(), "piggery")
 	os.MkdirAll(other, 0o755)
 	os.WriteFile(filepath.Join(other, "index.ts"), []byte("// mine\n"), 0o644)
-	if _, err := InstallOmpExt(other, "v1"); err == nil {
+	if _, err := InstallOmpExt(other); err == nil {
 		t.Error("install replaced a directory that is not piggery's")
 	}
 	if _, err := RemoveOmpExt(other); err == nil {
@@ -65,13 +74,13 @@ func TestOmpExtCopy(t *testing.T) {
 
 	// A worker: the copy piggery owns, and the file for `-e`. A current copy is left as it is.
 	dir := t.TempDir()
-	entry, err := EnsureOmpWorkerExt(dir, "v1")
+	entry, err := EnsureOmpWorkerExt(dir)
 	if err != nil || entry != filepath.Join(dir, "plugins", "omp", "omp", "index.ts") {
 		t.Fatalf("worker entry %q, %v", entry, err)
 	}
 	old := time.Now().Add(-time.Hour)
 	os.Chtimes(entry, old, old)
-	if _, err := EnsureOmpWorkerExt(dir, "v1"); err != nil {
+	if _, err := EnsureOmpWorkerExt(dir); err != nil {
 		t.Fatal(err)
 	}
 	if fi, _ := os.Stat(entry); fi.ModTime().After(old.Add(time.Minute)) {

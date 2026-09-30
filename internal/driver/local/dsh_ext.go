@@ -30,19 +30,20 @@ func DshEntry(dir string) string {
 	return filepath.Join(DshExtDir(dir), filepath.FromSlash(dshext.Entry))
 }
 
-// DshExtVersion is the version of the managed copy at ext; managed is false when ext holds none.
-func DshExtVersion(ext string) (version string, managed bool) { return dshManaged.Version(ext) }
+// DshExtVersion is the integration version of the managed copy at ext; managed is false when ext
+// holds none.
+func DshExtVersion(ext string) (version int, managed bool) { return dshManaged.Version(ext) }
 
-// DshExtCurrent: the managed copy at ext holds exactly what version would write.
-func DshExtCurrent(ext, version string) bool { return dshManaged.Current(ext, version) }
+// DshExtCurrent: the managed copy at ext holds exactly what this binary would write.
+func DshExtCurrent(ext string) bool { return dshManaged.Current(ext) }
 
 // InstallDshExt writes the plugin into ext, in place of a managed copy. Anything else there is
 // refused. It reports whether it wrote.
-func InstallDshExt(ext, version string) (bool, error) { return dshManaged.Install(ext, version) }
+func InstallDshExt(ext string) (bool, error) { return dshManaged.Install(ext) }
 
-// UpdateDshExt (daemon start): rewrites a managed copy at ext that is older than version, or, when
-// either is a dev build, that differs from what version writes. No copy, no change.
-func UpdateDshExt(ext, version string) (bool, error) { return dshManaged.Update(ext, version) }
+// UpdateDshExt (daemon start): rewrites a managed copy at ext whose integration version is lower
+// than this binary's. No copy, no change.
+func UpdateDshExt(ext string) (bool, error) { return dshManaged.Update(ext) }
 
 // RemoveDshExt deletes a managed copy at ext; it reports whether there was one.
 func RemoveDshExt(ext string) (bool, error) { return dshManaged.Remove(ext) }
@@ -58,13 +59,13 @@ func DshSessionsDir(dir string) string { return SessionsRoot(dir, "dsh") }
 
 var dshWorkerExt sync.Mutex
 
-// EnsureDshWorker makes the plugin copy current for version and writes the workers' overlay,
-// returning its path. Called before every spawn: the copy is written only when missing or not this
-// binary's, never while current, so a worker that is starting is not raced by a rewrite.
-func EnsureDshWorker(dir, version string, blacklist []string) (patch string, err error) {
+// EnsureDshWorker makes the plugin copy current and writes the workers' overlay, returning its
+// path. Called before every spawn: the copy is written only when missing or not what this binary
+// writes, never while current, so a worker that is starting is not raced by a rewrite.
+func EnsureDshWorker(dir string, blacklist []string) (patch string, err error) {
 	dshWorkerExt.Lock()
 	defer dshWorkerExt.Unlock()
-	if _, err := InstallDshExt(DshExtDir(dir), version); err != nil {
+	if _, err := InstallDshExt(DshExtDir(dir)); err != nil {
 		return "", err
 	}
 	patch = DshWorkerPatchPath(dir)

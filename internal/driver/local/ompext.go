@@ -78,19 +78,20 @@ func OmpExtDir(dir string) string {
 	return filepath.Join(OmpHumanAgentDir(OmpAgentDirRoot(dir)), "extensions", "piggery")
 }
 
-// OmpExtVersion is the version of the managed copy at ext; managed is false when ext holds none.
-func OmpExtVersion(ext string) (version string, managed bool) { return ompManaged.Version(ext) }
+// OmpExtVersion is the integration version of the managed copy at ext; managed is false when ext
+// holds none.
+func OmpExtVersion(ext string) (version int, managed bool) { return ompManaged.Version(ext) }
 
-// OmpExtCurrent: the managed copy at ext holds exactly what version would write.
-func OmpExtCurrent(ext, version string) bool { return ompManaged.Current(ext, version) }
+// OmpExtCurrent: the managed copy at ext holds exactly what this binary would write.
+func OmpExtCurrent(ext string) bool { return ompManaged.Current(ext) }
 
 // InstallOmpExt writes the extension into ext, in place of a managed copy. Anything else there is
 // refused. It reports whether it wrote.
-func InstallOmpExt(ext, version string) (bool, error) { return ompManaged.Install(ext, version) }
+func InstallOmpExt(ext string) (bool, error) { return ompManaged.Install(ext) }
 
-// UpdateOmpExt (daemon start): rewrites a managed copy at ext that is older than version, or, when
-// either is a dev build, that differs from what version writes. No copy, no change.
-func UpdateOmpExt(ext, version string) (bool, error) { return ompManaged.Update(ext, version) }
+// UpdateOmpExt (daemon start): rewrites a managed copy at ext whose integration version is lower
+// than this binary's. No copy, no change.
+func UpdateOmpExt(ext string) (bool, error) { return ompManaged.Update(ext) }
 
 // RemoveOmpExt deletes a managed copy at ext; it reports whether there was one.
 func RemoveOmpExt(ext string) (bool, error) { return ompManaged.Remove(ext) }
@@ -100,16 +101,16 @@ func OmpWorkerExtDir(dir string) string { return PluginDir(dir, "omp") }
 
 var ompWorkerExt sync.Mutex
 
-// EnsureOmpWorkerExt makes the workers' copy current for version and returns the file to load
+// EnsureOmpWorkerExt makes the workers' copy current and returns the file to load
 // with `omp -e <entry>` (an explicit -e loads even with --no-extensions, and the per-run agent dir's
 // empty extensions/ leaves nothing else to load twice). Called before every spawn: it writes only
-// when the copy is missing or not this binary's (a new build), never while it is current, so a
+// when the copy is missing or not what this binary writes, never while it is current, so a
 // worker that is starting is not raced by a rewrite; a running worker has its files loaded already.
-func EnsureOmpWorkerExt(dir, version string) (entry string, err error) {
+func EnsureOmpWorkerExt(dir string) (entry string, err error) {
 	ompWorkerExt.Lock()
 	defer ompWorkerExt.Unlock()
 	ext := OmpWorkerExtDir(dir)
-	if _, err := InstallOmpExt(ext, version); err != nil {
+	if _, err := InstallOmpExt(ext); err != nil {
 		return "", err
 	}
 	return filepath.Join(ext, filepath.FromSlash(ompext.Entry)), nil

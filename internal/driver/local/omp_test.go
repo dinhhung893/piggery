@@ -193,7 +193,6 @@ func newOmpDriver(t *testing.T, mode string, opts Options) (*Driver, string) {
 	t.Setenv("PI_CODING_AGENT_DIR", "")
 	t.Setenv("OMP_PROFILE", "work") // a named profile of the daemon's own: it must not reach the worker
 	t.Setenv("PI_PROFILE", "work")
-	opts.Version = "test"
 	return NewOmp(dir, opts), dir
 }
 

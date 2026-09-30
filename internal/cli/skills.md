@@ -68,21 +68,13 @@ A template is `~/.piggery/templates/<name>/manifest.yaml` plus the prompt files 
 relative to that directory. To start from a built-in, copy its directory under a new name and
 set `template:` to that name. You do not bring it up: the Human does, or asks a session to found it.
 
-**Manifest fields** (only these exist):
-
-- `template` (required): the template's name, also the default team name. `summary`: one line, when
-  to use it. `auto_join_role`: the founder's role (else the only role).
-- `roles.<role>` (at least one): `description` (one line); `instructions_file` or `instructions`;
-  `tools` (`send`, `inbox`, `who`, `agent`; there are no other tools); `can_spawn: [role]`; `can_pin: true` (board, needs
-  `send`); `can_set_cwd: true` (may spawn a worker in another directory); `spawn: {model:
-  provider/id, thinking: level, harness: pi|claude|codex|omp|dsh}` (omit to inherit the founding session's).
-- `routing`: `{from: role, to: role, allow: true|false, cc: [role]}`; the first rule matching
-  (sender's role, recipient's role) decides, none means denied; `to: notify` lets a role notify
-  the Human; `cc` copies other members of those roles. Mail between teams ignores routing.
-- `limits`: `depth` and `concurrency` (required once a role can spawn),
-  `messages_per_participant_per_minute`, `max_respawn_per_hour`.
-- `timers`: `{on: role, silent_for: 20m, notify: reports_to|notify|<role>}`: one notice when that
-  role works with no turn end for that long.
+**Manifest fields** (only these exist; each with its default is in
+[docs/reference.md](https://github.com/sting8k/piggery/blob/main/docs/reference.md#manifest)):
+`template` (required, the name), `summary`, `auto_join_role`, `roles.<role>` (`instructions` or
+`instructions_file`, `tools`, `can_spawn`, `can_pin`, `can_set_cwd`, `spawn`), `routing`, `limits`, `timers`.
+The tools are `send`, `inbox`, `who`, `agent` and no others. The first routing rule matching (sender's
+role, recipient's role) decides and none means denied; `to: notify` lets a role notify the Human; mail
+between teams ignores routing. A role that can spawn needs `limits.depth` and `limits.concurrency`.
 
 **Prompts.** Name tools only as `{tool:send}`, `{tool:agent}`, `{tool:inbox}`, `{tool:who}` (each harness names them
 differently: `piggery_send` in pi, `mcp__piggery__send` in Claude and Codex); a placeholder that
@@ -92,7 +84,7 @@ persona. Stay neutral about the kind of work: a task is a result, its bounds, an
 out the lifecycle: give the next task to a free worker instead of spawning; end the turn after
 sending; when a worker goes silent, read its tail, then nudge or resume it; stop workers when done.
 
-**The Human's own rules** are not in a template: `prompts:` in `~/.piggery/config.yaml` appends a file of theirs to the card of every role it names (`<role>`, `<template>/<role>` or `solo`), so do not copy such rules into a template's prompts.
+**The Human's own rules** are not in a template: `prompts:` in `~/.piggery/config.yaml` (see the reference) appends a file of theirs to the cards of the roles it names, so do not copy such rules into a template's prompts.
 
 **A small complete template** (`~/.piggery/templates/brief/`):
 

@@ -29,8 +29,15 @@ import (
 
 // Config locates the data dir. There is no env override; tests pass their own Dir.
 type Config struct {
-	Dir     string
-	Version string // this binary's (cli.Version): an installed pi extension older than it is updated
+	Dir string
+	// Version is the build version the daemon reports in ps (top shows it); nothing reads it back.
+	Version string
+	// Integrations, when set (the daemon of the real binary; tests leave it nil, since the
+	// harness directories are the user's), makes the start bring the pi, omp and dsh extensions
+	// setup installed up to this binary's integration version, and log one warning for each
+	// outdated part it returns (claude, codex, paseo: only `piggery setup --outdated` changes
+	// them). ps reports the same list, read again on each call (files only).
+	Integrations func(dir string) []proto.Outdated
 }
 
 // DefaultDir is ~/.piggery.
@@ -52,14 +59,16 @@ func ArchiveDir(dir string) string     { return filepath.Join(dir, "archive") }
 const maxLine = 16 << 20
 
 type server struct {
-	idents     uint64 // identify counter, guarded by mu
-	eng        *core.Engine
-	adminToken string
-	log        *slog.Logger
-	dir        string
-	settings   Settings // config.yaml
-	startedAt  time.Time
-	stop       context.CancelFunc // the normal shutdown (as SIGINT/SIGTERM), for the stop verb
+	idents       uint64 // identify counter, guarded by mu
+	eng          *core.Engine
+	adminToken   string
+	log          *slog.Logger
+	dir          string
+	version      string                            // Config.Version, for ps
+	integrations func(dir string) []proto.Outdated // Config.Integrations, for ps
+	settings     Settings                          // config.yaml
+	startedAt    time.Time
+	stop         context.CancelFunc // the normal shutdown (as SIGINT/SIGTERM), for the stop verb
 
 	mu    sync.Mutex
 	conns map[*conn]struct{}
@@ -128,8 +137,8 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer db.Close()
 
-	s := &server{adminToken: token, log: log, dir: cfg.Dir, settings: settings, startedAt: time.Now(), stop: stop, conns: map[*conn]struct{}{}, runs: map[string]string{}}
-	opts := local.Options{Version: cfg.Version, OnExit: func(participantID, runID string, e core.Exit) {
+	s := &server{adminToken: token, log: log, dir: cfg.Dir, version: cfg.Version, integrations: cfg.Integrations, settings: settings, startedAt: time.Now(), stop: stop, conns: map[*conn]struct{}{}, runs: map[string]string{}}
+	opts := local.Options{OnExit: func(participantID, runID string, e core.Exit) {
 		// Every worker exit is recorded: one that ends on its own, and the ones StopAll ends
 		// while the daemon shuts down (so not the request/daemon ctx). Idempotent after Stop.
 		if err := s.eng.ProcessExited(context.Background(), participantID, runID, e); err != nil {
@@ -169,31 +178,26 @@ func Run(ctx context.Context, cfg Config) error {
 	for _, err := range errs {
 		log.Warn("config file", "err", err)
 	}
-	// The pi extension `piggery setup pi` installed, brought up to this binary.
-	if cfg.Version != "" {
-		ext := local.PiExtDir(cfg.Dir)
-		if updated, err := local.UpdatePiExt(ext, cfg.Version); err != nil {
-			log.Warn("pi extension", "dir", ext, "err", err)
-		} else if updated {
-			log.Info("pi extension updated", "dir", ext, "version", cfg.Version)
+	if cfg.Integrations != nil {
+		// The extensions `piggery setup pi|omp|dsh` installed: rewritten when their integration
+		// version is lower than this binary's, and only then.
+		for _, x := range []struct {
+			what, ext string
+			update    func(string) (bool, error)
+		}{
+			{"pi extension", local.PiExtDir(cfg.Dir), local.UpdatePiExt},
+			{"omp extension", local.OmpExtDir(cfg.Dir), local.UpdateOmpExt},
+			{"dsh plugin", local.DshExtDir(cfg.Dir), local.UpdateDshExt},
+		} {
+			if updated, err := x.update(x.ext); err != nil {
+				log.Warn(x.what, "dir", x.ext, "err", err)
+			} else if updated {
+				log.Info(x.what+" updated", "dir", x.ext)
+			}
 		}
-	}
-	// The omp extension `piggery setup omp` installed, the same way.
-	if cfg.Version != "" {
-		ext := local.OmpExtDir(cfg.Dir)
-		if updated, err := local.UpdateOmpExt(ext, cfg.Version); err != nil {
-			log.Warn("omp extension", "dir", ext, "err", err)
-		} else if updated {
-			log.Info("omp extension updated", "dir", ext, "version", cfg.Version)
-		}
-	}
-	// The dsh plugin `piggery setup dsh` installed, the same way.
-	if cfg.Version != "" {
-		ext := local.DshExtDir(cfg.Dir)
-		if updated, err := local.UpdateDshExt(ext, cfg.Version); err != nil {
-			log.Warn("dsh plugin", "dir", ext, "err", err)
-		} else if updated {
-			log.Info("dsh plugin updated", "dir", ext, "version", cfg.Version)
+		// What is installed in a harness's own config or app is never changed on its own.
+		for _, o := range cfg.Integrations(cfg.Dir) {
+			log.Warn("outdated integration: " + o.String() + ": piggery setup --outdated")
 		}
 	}
 	// A solo uses the limits of the built-in p2p template.
@@ -439,7 +443,11 @@ func (s *server) handle(ctx context.Context, cn *conn, req proto.Request) proto.
 		case proto.VerbPs:
 			return call(req, func(a core.StateArgs) (any, error) {
 				st, err := s.eng.State(ctx, a)
-				return proto.PsResult{PID: os.Getpid(), StartedAt: s.startedAt.UnixMilli(), State: st}, err
+				r := proto.PsResult{PID: os.Getpid(), StartedAt: s.startedAt.UnixMilli(), Version: s.version, State: st}
+				if s.integrations != nil {
+					r.Outdated = s.integrations(s.dir)
+				}
+				return r, err
 			})
 		case proto.VerbShutdown:
 			return call(req, func(struct{}) (any, error) { return struct{}{}, nil })

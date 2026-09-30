@@ -317,7 +317,7 @@ func untrustedPiggeryHooks(metas []codexHookMeta, keys []string) []string {
 // (captured: exit 0, nothing queued).
 func codexBlock(home, self string, state []codexHookMeta) string {
 	var b strings.Builder
-	b.WriteString(codexBlockBegin + "\n")
+	b.WriteString(codexBlockBegin + "\n" + codexMarker(local.IntegrationVersion("codex")) + "\n")
 	fmt.Fprintf(&b, "[mcp_servers.piggery]\ncommand = %s\nargs = [\"mcp\"]\nenv = { CODEX_HOME = %s }\ndefault_tools_approval_mode = \"approve\"\n", strconv.Quote(self), strconv.Quote(home))
 	for _, m := range state {
 		fmt.Fprintf(&b, "\n[hooks.state.%s]\ntrusted_hash = %s\n", strconv.Quote(m.Key), strconv.Quote(m.CurrentHash))

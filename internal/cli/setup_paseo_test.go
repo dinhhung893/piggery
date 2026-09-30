@@ -95,7 +95,7 @@ func TestSetupPaseoInstallRemove(t *testing.T) {
 	}
 
 	os.WriteFile(filepath.Join(dst, "VERSION"), []byte("0.0.1\n"), 0o644)
-	if st := paseoStatus(o); len(st.Problems) != 1 || st.Problems[0].Fix != "piggery setup paseo --paseo-home /h" {
+	if st := paseoStatus(o); len(st.Problems) != 1 || st.Problems[0].Fix != "piggery setup --outdated --paseo-home /h" {
 		t.Fatalf("stale copy: %+v", st.Problems)
 	}
 	if _, err := installPaseo(o); err != nil || !slices.Equal(changes(t, log), []string{"plugin reload piggery --home /h"}) {

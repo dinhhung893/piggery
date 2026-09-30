@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.5.0 - 2026-09-30
+
+`piggery setup --outdated` brings what piggery installed for your harnesses up to date, and user docs
+are public: `docs/guide.md` and `docs/reference.md`.
+
+After upgrading, run `piggery setup --outdated`; reload the Paseo app if you use its plugin. Each
+thing piggery installs for a harness now has an integration version, and whether it is outdated is
+decided by that number, not by the build.
+
+- One integer for each of pi, omp, dsh, claude, codex and paseo, bumped only when what is installed
+  changes; an install carries it as `PIGGERY_INTEGRATION_VERSION=N`. A rebuild that leaves the
+  installed part as it was no longer reads as outdated or rewrites anything. Installs from before
+  this read as outdated once. pi, omp and dsh are brought up by the daemon at its start; for claude,
+  codex and paseo the daemon logs one warning, `ps` and `top` show `outdated: claude (v1 < v2):
+  piggery setup --outdated` (`ps --json` has the list as `outdated`, which the Paseo plugin reads
+  instead of running a command), and `setup` and `doctor` show `vN < vM` (a Codex hook missing from
+  `hooks.json` counts).
+- `piggery setup --outdated` updates every installed integration that is outdated (`setup <harness>`
+  for each, one line per update and what to do after); not installed ones are untouched, and it says
+  so when all is current. `install.sh` no longer runs anything after an install: it prints
+  `piggery setup <harness>` for a new machine and `piggery setup --outdated` for an upgrade.
+- Docs: `docs/guide.md` (by task, including how to customize `~/.piggery`) and `docs/reference.md`
+  (every command, every key of `config.yaml`, the harness profiles and the template manifest, and
+  what each harness can do), linked from the README. The adapters' "piggery binary is not on PATH"
+  error links the guide.
+- `top` shows the daemon's version at the end of its key footer; when the `piggery` you run is
+  another build, it is amber with `(cli <version>: piggery restart)`. `ps --json` has `version`.
+- Paseo plugin: a session you opened has a Tail and ctx/turns (from its transcript), a member's
+  Overview shows its current task (handed back, newer mail), and the list starts with top's status
+  line: daemon age, teams, working and idle, held, unacked, version, and the outdated notice.
+
 ## v0.4.0 - 2026-09-29
 
 Shared prompts: your own rules (code style, how you organise a project) go into the role card of

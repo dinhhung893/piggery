@@ -140,7 +140,7 @@ func writeClaudePlugin(root, self string) error {
 		{filepath.Join(root, ".claude-plugin", "marketplace.json"), map[string]any{"name": claudeMarketplace,
 			"owner":   map[string]any{"name": "piggery"},
 			"plugins": []any{map[string]any{"name": "piggery", "source": "./piggery", "description": "piggery hooks for Claude Code sessions"}}}},
-		{filepath.Join(root, "piggery", ".claude-plugin", "plugin.json"), map[string]any{"name": "piggery", "version": Version,
+		{filepath.Join(root, "piggery", ".claude-plugin", "plugin.json"), map[string]any{"name": "piggery", "version": claudeVersionString(local.IntegrationVersion("claude")),
 			"description": "Joins this Claude Code session to piggery: mail with turns, tool calls and the end of a turn"}},
 		{filepath.Join(root, "piggery", "hooks", "hooks.json"), map[string]any{"hooks": hooks}},
 	}
@@ -233,7 +233,9 @@ func installClaude(root, self string) (string, error) {
 	}
 	// Claude may run its own copy of the plugin: one that is stale (moved binary, another
 	// marketplace) is installed again.
-	if st.plugin && (st.marketplace == "" || !samePath(st.marketplace, root) || !hooksRunSelf(st.pluginPath, self)) {
+	copyVersion, copyRead := claudePluginVersion(st.pluginPath)
+	if st.plugin && (st.marketplace == "" || !samePath(st.marketplace, root) || !hooksRunSelf(st.pluginPath, self) ||
+		copyRead && copyVersion < local.IntegrationVersion("claude")) {
 		if err := run("plugin", "uninstall", local.ClaudePlugin); err != nil {
 			return "", err
 		}

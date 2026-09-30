@@ -316,3 +316,34 @@ func TestTopOverviewShowsTheAssignment(t *testing.T) {
 		t.Fatal("a member without an assignment shows a task row")
 	}
 }
+
+// The footer ends with the daemon's version; another cli build says how to fix it, in full when it
+// fits and as the version alone before that; on a terminal too narrow for either the version goes
+// and the key hints stay.
+func TestTopFooterShowsTheDaemonVersion(t *testing.T) {
+	old := Version
+	Version = "dev-cli"
+	t.Cleanup(func() { Version = old })
+	ps := proto.PsResult{Version: "dev-daemon"}
+	sgr := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	last := func(width int) string {
+		m := newTopModel(nil, "")
+		m.Update(tea.WindowSizeMsg{Width: width, Height: 24})
+		m.Update(fetched{ps: ps})
+		lines := strings.Split(sgr.ReplaceAllString(m.render(), ""), "\n")
+		return lines[len(lines)-1]
+	}
+	if l := last(180); !strings.HasSuffix(l, "dev-daemon (cli dev-cli: piggery restart)") {
+		t.Fatalf("mismatch footer: %q", l)
+	}
+	if l := last(140); !strings.HasSuffix(l, "dev-daemon") || strings.Contains(l, "cli") {
+		t.Fatalf("mismatch footer, room for the version only: %q", l)
+	}
+	Version = "dev-daemon"
+	if l := last(140); !strings.HasSuffix(l, "dev-daemon") || strings.Contains(l, "cli") {
+		t.Fatalf("same version footer: %q", l)
+	}
+	if l := last(30); strings.Contains(l, "dev-daemon") || strings.TrimSpace(l) == "" {
+		t.Fatalf("narrow footer: %q, want the key hints and no version", l)
+	}
+}

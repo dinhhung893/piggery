@@ -33,6 +33,21 @@ export function runPiggery(bin: string, args: string[], timeoutMs = TIMEOUT_MS):
   });
 }
 
+/**
+ * The notice for installs that need `piggery setup --outdated`, from the `outdated` list of
+ * `piggery ps --json` (the daemon reads it from files on each call, so nothing is spawned here):
+ * "outdated: codex (v0 < v1): piggery setup --outdated", or "" when the list is absent or empty.
+ * The text is what `piggery ps` prints.
+ */
+export function outdatedNotice(ps: Record<string, unknown>): string {
+  const list = Array.isArray(ps.outdated) ? ps.outdated : [];
+  const what = list.flatMap((o: { name?: unknown; have?: unknown; want?: unknown; drift?: unknown }) => {
+    if (typeof o?.name !== "string" || typeof o.have !== "number" || typeof o.want !== "number") return [];
+    return [`${o.name} (${o.have < o.want ? `v${o.have} < v${o.want}` : `v${o.have}: ${String(o.drift ?? "")}`})`];
+  });
+  return what.length ? `outdated: ${what.join(", ")}: piggery setup --outdated` : "";
+}
+
 /** A directory as piggery records it, symlinks resolved; as given when it cannot be resolved. */
 export async function realDir(dir: string): Promise<string> {
   try {

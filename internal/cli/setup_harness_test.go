@@ -207,29 +207,36 @@ func TestSetupPiInstallRemove(t *testing.T) {
 		return p.Args[slices.Index(p.Args, "-e")+1]
 	}
 
-	if _, err := installPi(dir, "", "v1.2.0"); err != nil {
+	if _, err := installPi(dir, ""); err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := local.PiExtVersion(copyDir); !ok || v != "v1.2.0" || profileExt() != filepath.Join(copyDir, "index.ts") {
-		t.Fatalf("copy %q %v, profile -e %s", v, ok, profileExt())
+	if v, ok := local.PiExtVersion(copyDir); !ok || v != local.IntegrationVersion("pi") || profileExt() != filepath.Join(copyDir, "index.ts") {
+		t.Fatalf("copy v%d %v, profile -e %s", v, ok, profileExt())
 	}
 	if b, _ := os.ReadFile(settings); string(b) != orig {
 		t.Fatalf("settings changed:\n%s", b)
 	}
-	if msg, _ := installPi(dir, "", "v1.2.0"); !strings.Contains(msg, "already") {
+	if msg, _ := installPi(dir, ""); !strings.Contains(msg, "already") {
 		t.Fatalf("second install: %q", msg)
 	}
-	if st := piStatus(dir, "/self", "v1.3.0"); !st.Installed || !strings.Contains(st.Problems[0].Text, "not this piggery's") {
-		t.Fatalf("status for a newer binary: %+v", st)
+	// A copy at this binary's integer is not outdated, whatever build wrote it; one that only has
+	// a build version (an install from before the integers) is, once, and the daemon's update
+	// rewrites it.
+	if i, ok := integrationOf(dir, "pi"); !ok || i.outdated() {
+		t.Fatalf("a current copy: %+v %v", i, ok)
 	}
-	if up, _ := local.UpdatePiExt(copyDir, "v1.1.0"); up {
-		t.Fatal("an older binary updated the copy")
+	oldMarker(t, filepath.Join(copyDir, "index.ts"))
+	if i, _ := integrationOf(dir, "pi"); !i.outdated() || i.Have != 0 || i.Want != local.IntegrationVersion("pi") {
+		t.Fatalf("a copy with a build-version marker: %+v", i)
 	}
-	if up, _ := local.UpdatePiExt(copyDir, "v1.3.0"); !up {
-		t.Fatal("a newer binary did not update the copy")
+	if up, _ := local.UpdatePiExt(copyDir); !up {
+		t.Fatal("the daemon start did not update an outdated copy")
+	}
+	if i, _ := integrationOf(dir, "pi"); i.outdated() {
+		t.Fatalf("after the update: %+v", i)
 	}
 
-	if _, err := installPi(dir, checkout, "v1.3.0"); err != nil {
+	if _, err := installPi(dir, checkout); err != nil {
 		t.Fatal(err)
 	}
 	var s struct{ Extensions []string }
@@ -239,7 +246,7 @@ func TestSetupPiInstallRemove(t *testing.T) {
 		profileExt() != filepath.Join(checkout, "index.ts") {
 		t.Fatalf("--ext: copy kept=%v, extensions %q, profile -e %s", err == nil, s.Extensions, profileExt())
 	}
-	if _, err := installPi(dir, "", "v1.3.0"); err != nil {
+	if _, err := installPi(dir, ""); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(settings); string(b) != orig {
@@ -256,7 +263,7 @@ func TestSetupPiInstallRemove(t *testing.T) {
 	}
 	os.MkdirAll(copyDir, 0o700)
 	os.WriteFile(filepath.Join(copyDir, "index.ts"), []byte("// mine"), 0o600)
-	if _, err := installPi(dir, "", "v1.3.0"); err == nil || !strings.Contains(err.Error(), "not piggery's") {
+	if _, err := installPi(dir, ""); err == nil || !strings.Contains(err.Error(), "not piggery's") {
 		t.Fatalf("over a directory not piggery's: %v", err)
 	}
 }
@@ -275,26 +282,20 @@ func TestSetupOmpInstallRemove(t *testing.T) {
 	if local.OmpExtDir(dir) != copyDir {
 		t.Fatalf("ext dir %s, want %s", local.OmpExtDir(dir), copyDir)
 	}
-	if st := ompStatus(dir, "/self", "v1.2.0"); st.Installed || len(st.Problems) != 0 {
+	if st := ompStatus(dir, "/self"); st.Installed || len(st.Problems) != 0 {
 		t.Fatalf("before setup: %+v", st)
 	}
-	if msg, err := installOmp(dir, "v1.2.0"); err != nil || !strings.Contains(msg, "installed") {
+	if msg, err := installOmp(dir); err != nil || !strings.Contains(msg, "installed") {
 		t.Fatalf("install: %q, %v", msg, err)
 	}
-	if v, ok := local.OmpExtVersion(copyDir); !ok || v != "v1.2.0" {
-		t.Fatalf("copy %q %v", v, ok)
+	if v, ok := local.OmpExtVersion(copyDir); !ok || v != local.IntegrationVersion("omp") {
+		t.Fatalf("copy v%d %v", v, ok)
 	}
-	if msg, _ := installOmp(dir, "v1.2.0"); !strings.Contains(msg, "already") {
+	if msg, _ := installOmp(dir); !strings.Contains(msg, "already") {
 		t.Fatalf("second install: %q", msg)
 	}
-	if st := ompStatus(dir, "/self", "v1.3.0"); !st.Installed || !strings.Contains(st.Problems[0].Text, "not this piggery's") {
-		t.Fatalf("status for a newer binary: %+v", st)
-	}
-	if st := ompStatus(dir, "/self", "v1.2.0"); len(st.Problems) != 1 || !strings.Contains(st.Problems[0].Text, "not on PATH") {
+	if st := ompStatus(dir, "/self"); len(st.Problems) != 1 || !strings.Contains(st.Problems[0].Text, "not on PATH") {
 		t.Fatalf("status of a current copy with no piggery on PATH: %+v", st) // the extension starts the daemon with it
-	}
-	if up, _ := local.UpdateOmpExt(copyDir, "v1.3.0"); !up {
-		t.Fatal("a newer binary did not update the copy")
 	}
 	if _, err := removeOmp(dir); err != nil {
 		t.Fatal(err)
@@ -307,10 +308,10 @@ func TestSetupOmpInstallRemove(t *testing.T) {
 	}
 	os.MkdirAll(copyDir, 0o700)
 	os.WriteFile(filepath.Join(copyDir, "index.ts"), []byte("// mine"), 0o600)
-	if _, err := installOmp(dir, "v1.3.0"); err == nil || !strings.Contains(err.Error(), "not piggery's") {
+	if _, err := installOmp(dir); err == nil || !strings.Contains(err.Error(), "not piggery's") {
 		t.Fatalf("over a directory not piggery's: %v", err)
 	}
-	if st := ompStatus(dir, "/self", "v1.3.0"); st.Installed || len(st.Problems) != 1 || !strings.Contains(st.Problems[0].Text, "not piggery's") {
+	if st := ompStatus(dir, "/self"); st.Installed || len(st.Problems) != 1 || !strings.Contains(st.Problems[0].Text, "not piggery's") {
 		t.Fatalf("status of a directory not piggery's: %+v", st)
 	}
 }
@@ -330,7 +331,7 @@ func TestSetupDshInstallRemove(t *testing.T) {
 	mine := "# mine\n- id: ui-skin\n  disabled: true\n"
 	os.MkdirAll(filepath.Dir(patch), 0o700)
 	os.WriteFile(patch, []byte(mine), 0o644)
-	if msg, err := installDsh(dir, "v1.2.0"); err != nil || !strings.Contains(msg, "installed") {
+	if msg, err := installDsh(dir); err != nil || !strings.Contains(msg, "installed") {
 		t.Fatalf("install: %q, %v", msg, err)
 	}
 	got, _ := os.ReadFile(patch)
@@ -342,17 +343,17 @@ func TestSetupDshInstallRemove(t *testing.T) {
 	if st, _ := os.Stat(patch); st.Mode().Perm() != 0o644 {
 		t.Fatalf("mode %v: the user's file mode changed", st.Mode())
 	}
-	if msg, _ := installDsh(dir, "v1.2.0"); !strings.Contains(msg, "already") {
+	if msg, _ := installDsh(dir); !strings.Contains(msg, "already") {
 		t.Fatalf("second install: %q", msg)
 	}
-	if st := dshStatus(dir, "/self", "v1.2.0"); !st.Installed || len(st.Problems) != 1 || !strings.Contains(st.Problems[0].Text, "not on PATH") {
+	if st := dshStatus(dir, "/self"); !st.Installed || len(st.Problems) != 1 || !strings.Contains(st.Problems[0].Text, "not on PATH") {
 		t.Fatalf("status of a full install: %+v", st)
 	}
 	os.WriteFile(patch, []byte(mine), 0o644)
-	if st := dshStatus(dir, "/self", "v1.2.0"); !strings.Contains(st.Problems[0].Text, "no row") {
+	if st := dshStatus(dir, "/self"); !strings.Contains(st.Problems[0].Text, "no row") {
 		t.Fatalf("status without the row: %+v", st)
 	}
-	installDsh(dir, "v1.2.0")
+	installDsh(dir)
 	if _, err := removeDsh(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -366,11 +367,35 @@ func TestSetupDshInstallRemove(t *testing.T) {
 		t.Fatalf("second remove: %q", msg)
 	}
 	os.WriteFile(patch, []byte("a: 1\n"), 0o600)
-	if _, err := installDsh(dir, "v1.2.0"); err == nil {
+	if _, err := installDsh(dir); err == nil {
 		t.Fatal("a home patch that is not a list was rewritten")
 	} else if got, _ := os.ReadFile(patch); string(got) != "a: 1\n" {
 		t.Fatalf("refused, but the file is now %q", got)
 	} else if _, err := os.Stat(local.DshExtDir(dir)); err == nil {
 		t.Fatal("refused, but the copy was installed")
+	}
+}
+
+// integrationOf is the installed integration of dir by name.
+func integrationOf(dir, name string) (integration, bool) {
+	for _, i := range installedIntegrations(dir) {
+		if i.Name == name {
+			return i, true
+		}
+	}
+	return integration{}, false
+}
+
+// oldMarker rewrites the first line of file as a piggery from before the integers wrote it: a
+// build version where the integer is now.
+func oldMarker(t *testing.T, file string) {
+	t.Helper()
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, _ := strings.Cut(string(b), "\n")
+	if err := os.WriteFile(file, []byte("// managed by piggery v0.3.0: written by `piggery setup`; run it again instead of editing\n"+rest), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

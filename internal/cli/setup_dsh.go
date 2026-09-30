@@ -25,9 +25,9 @@ import (
 // dshHarness: dsh's plugin talks to the daemon itself (no hooks, no piggery mcp).
 var dshHarness = harnessProfile{
 	setupTarget: setupTarget{name: "dsh", cmd: "dsh",
-		install: func(o setupOpts) (string, error) { return installDsh(o.dir, Version) },
+		install: func(o setupOpts) (string, error) { return installDsh(o.dir) },
 		remove:  func(o setupOpts) (string, error) { return removeDsh(o.dir) },
-		status:  func(o setupOpts) harnessState { return dshStatus(o.dir, o.self, Version) },
+		status:  func(o setupOpts) harnessState { return dshStatus(o.dir, o.self) },
 		version: func(ctx context.Context, cmd string) (string, error) { return local.DshVersion(ctx, cmd) },
 	},
 	profilePath: local.DshProfilePath,
@@ -135,7 +135,7 @@ func writeAtomic(path, doc string) error {
 	return os.Rename(tmp, path)
 }
 
-func installDsh(dir, version string) (string, error) {
+func installDsh(dir string) (string, error) {
 	ext, patch := local.DshExtDir(dir), dshHomePatch()
 	cur, err := os.ReadFile(patch)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -145,7 +145,7 @@ func installDsh(dir, version string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", patch, err)
 	}
-	wrote, err := local.InstallDshExt(ext, version)
+	wrote, err := local.InstallDshExt(ext)
 	if err != nil {
 		return "", err
 	}
@@ -158,7 +158,7 @@ func installDsh(dir, version string) (string, error) {
 	if !wrote && !changed {
 		return "dsh: piggery's plugin is already installed", nil
 	}
-	return fmt.Sprintf("dsh: installed piggery's plugin (%s) in %s and its row in %s\ndsh: sessions started from now on join piggery; restart a dsh that is open.", version, ext, patch), nil
+	return fmt.Sprintf("dsh: installed piggery's plugin (v%d) in %s and its row in %s\ndsh: sessions started from now on join piggery; restart a dsh that is open.", local.IntegrationVersion("dsh"), ext, patch), nil
 }
 
 func removeDsh(dir string) (string, error) {
@@ -191,9 +191,9 @@ func removeDsh(dir string) (string, error) {
 	return "dsh: removed " + ext + " and piggery's row in " + patch, nil
 }
 
-// dshStatus: the installed copy (current for this binary), its row in the home patch naming that
-// copy's entry, and `piggery` on PATH being this binary (the plugin starts the daemon with it).
-func dshStatus(dir, self, version string) harnessState {
+// dshStatus: the installed copy, its row in the home patch naming that copy's entry, and `piggery`
+// on PATH being this binary (the plugin starts the daemon with it).
+func dshStatus(dir, self string) harnessState {
 	st := harnessState{Name: "dsh"}
 	ext := local.DshExtDir(dir)
 	have, managed := local.DshExtVersion(ext)
@@ -203,10 +203,7 @@ func dshStatus(dir, self, version string) harnessState {
 		}
 		return st
 	}
-	st.Installed, st.Detail = true, ext+" ("+have+")"
-	if !local.DshExtCurrent(ext, version) {
-		st.Problems = append(st.Problems, problem{fmt.Sprintf("the installed copy (%s) is not this piggery's (%s)", have, version), "piggery setup dsh"})
-	}
+	st.Installed, st.Detail = true, fmt.Sprintf("%s (v%d)", ext, have)
 	patch := dshHomePatch()
 	cur, _ := os.ReadFile(patch)
 	if !bytes.Contains(cur, []byte(dshBlock(dir))) {

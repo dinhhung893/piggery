@@ -28,9 +28,13 @@ func (e *env) setup(args []string) error {
 	ext := fs.String("ext", "", "a checkout's pi extension (extensions/pi) instead of the one in this binary")
 	force := fs.Bool("force", false, "overwrite an existing profile")
 	paseoHome := fs.String("paseo-home", "", "the Paseo daemon home setup paseo installs into (default: Paseo's own)")
+	outdated := fs.Bool("outdated", false, "bring every installed piggery integration that is outdated up to date (takes no other argument)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
+	}
+	if *outdated && len(pos) != 0 {
+		return fmt.Errorf("%w: setup --outdated takes no argument (only --paseo-home)", errUsage)
 	}
 	usage := fmt.Errorf("%w: setup [pi|claude|codex|omp|dsh|paseo] | setup remove <pi|claude|codex|omp|dsh|paseo> [--ext PATH] [--paseo-home PATH] [--force]", errUsage)
 	self, err := selfPath()
@@ -50,6 +54,8 @@ func (e *env) setup(args []string) error {
 		}
 	}
 	switch {
+	case *outdated:
+		return e.updateOutdated(o)
 	case len(pos) == 1:
 		if t, ok := targetNamed(pos[0]); ok {
 			return e.say(t.install(o))
@@ -104,6 +110,35 @@ func (e *env) setup(args []string) error {
 		}
 	}
 	fmt.Fprintln(e.stdout, server.ConfigStatus(e.dir))
+	return nil
+}
+
+// updateOutdated runs `setup <name>` for every integration that is installed and outdated (pi, omp
+// and dsh too, in case the daemon is not running to do it), one after the other; a failure is named
+// and the exit is non-zero, but the others still run. Not installed: untouched.
+func (e *env) updateOutdated(o setupOpts) error {
+	list := outdatedIntegrations(o.dir, false)
+	if len(list) == 0 {
+		fmt.Fprintln(e.stdout, "piggery integrations are up to date")
+		return nil
+	}
+	var failed []string
+	for _, i := range list {
+		t, ok := targetNamed(i.Name)
+		if !ok {
+			continue
+		}
+		msg, err := t.install(o)
+		if err != nil {
+			fmt.Fprintf(e.stdout, "%s: NOT updated (%s): %v\n", i.Name, i.detail(), err)
+			failed = append(failed, i.Name)
+			continue
+		}
+		fmt.Fprintf(e.stdout, "%s: updated (%s)\n%s\n", i.Name, i.detail(), msg)
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("not updated: %s", strings.Join(failed, ", "))
+	}
 	return nil
 }
 
@@ -186,9 +221,17 @@ func (st harnessState) line() string {
 // the versions piggery was tested with.
 func harnessStates(o setupOpts) []harnessState {
 	var sts []harnessState
+	ints := map[string]integration{}
+	for _, i := range installedIntegrations(o.dir) {
+		ints[i.Name] = i
+	}
 	for _, t := range setupTargets {
 		sts = append(sts, t.status(o))
 		st := &sts[len(sts)-1]
+		if i, ok := ints[t.name]; ok && st.Installed && i.outdated() &&
+			!slices.ContainsFunc(st.Problems, func(p problem) bool { return strings.HasPrefix(p.Text, "outdated (") }) {
+			st.Problems = append(st.Problems, problem{"outdated (" + i.detail() + ")", "piggery setup --outdated"})
+		}
 		st.Cmd = t.cmd
 		var p struct {
 			Cmd            string   `json:"cmd"`

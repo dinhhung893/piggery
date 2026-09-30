@@ -71,14 +71,27 @@ export function Detail({ theme, row, beside, onClose }: { theme: PluginTheme; ro
   );
 }
 
+/** A member's task as top's sidebar: the mail, who gave it and when, how its reply chain stands, a newer mail from the assigner. */
+function taskFacts(task: PigRow["task"]): [string, string][] {
+  if (!task) return [];
+  const facts: [string, string][] = [
+    ["task", `#${task.seq} ${task.title}`],
+    ["", `from ${task.from} · ${ago(task.at)} ago`],
+  ];
+  if (task.latest) facts.push(["", `${task.latest.by_member ? "handed back" : "reply"} #${task.latest.seq} · ${ago(task.latest.at)} ago`]);
+  if (task.newer) facts.push(["mail", `#${task.newer.seq} ${task.newer.title} · ${ago(task.newer.at)} ago`]);
+  return facts;
+}
+
 /** Every fact top's sidebar has of the row, one card row each; empty ones left out. */
 function Overview({ theme, row }: { theme: PluginTheme; row: PigRow }) {
   const facts: [string, string][] = [
+    ...taskFacts(row.task),
     ["team", row.team ?? ""],
     ["kind", row.kind],
     ["model", row.modelFull],
-    ["ctx", row.logged ? row.ctx || "-" : ""],
-    ["turns", row.logged ? row.turns || "-" : ""],
+    ["ctx", row.hasStats ? row.ctx || "-" : ""],
+    ["turns", row.hasStats ? row.turns || "-" : ""],
     ["started", row.came],
     ["since", ago(row.since)],
     ["unacked", String(row.unacked)],
@@ -92,10 +105,10 @@ function Overview({ theme, row }: { theme: PluginTheme; row: PigRow }) {
       <Rows theme={theme}>
         {facts
           .filter(([, v]) => v !== "")
-          .map(([k, v]) => (
-            <ListRow key={k} theme={theme}>
+          .map(([k, v], i) => (
+            <ListRow key={`${i}-${k}`} theme={theme}>
               <Text style={[text(theme, "label"), { width: KEY_WIDTH }]}>{k}</Text>
-              <Text style={[text(theme, k === "id" ? "meta" : "rowTitle", k === "unacked" && row.unacked > 0 ? "statusWarning" : undefined), { flex: 1 }]} selectable numberOfLines={1}>
+              <Text style={[text(theme, k === "id" || (k === "" && i > 0) ? "meta" : "rowTitle", k === "unacked" && row.unacked > 0 ? "statusWarning" : undefined), { flex: 1 }]} selectable numberOfLines={k === "task" ? 2 : 1}>
                 {v}
               </Text>
             </ListRow>
@@ -106,13 +119,13 @@ function Overview({ theme, row }: { theme: PluginTheme; row: PigRow }) {
 }
 
 function Tail({ theme, row }: { theme: PluginTheme; row: PigRow }) {
-  if (!row.logged) {
-    return <Text style={[text(theme, "meta"), { paddingHorizontal: SPACING[4] }]}>No tail: its harness keeps no driver log here.</Text>;
+  if (!row.tailable) {
+    return <Text style={[text(theme, "meta"), { paddingHorizontal: SPACING[4] }]}>No tail: piggery has no log of it to read.</Text>;
   }
   return <TailLog theme={theme} id={row.id} title={row.name} />;
 }
 
-/** A worker's last lines as piggery tail prints them, in a code block, newest at the bottom, refreshed while open. */
+/** A worker's or session's last lines as piggery tail prints them, in a code block, newest at the bottom, refreshed while open. */
 function TailLog({ theme, id, title }: { theme: PluginTheme; id: string; title: string }) {
   const call = useRpc(tail);
   const { value, error } = usePoll(async () => {

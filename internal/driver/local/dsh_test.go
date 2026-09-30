@@ -87,7 +87,7 @@ func newDshDriver(t *testing.T, mode string, prof DshProfile, opts ...Options) (
 	abs, _ := filepath.Abs(dshFixture)
 	t.Setenv("PGDRV_DSH", mode)
 	t.Setenv("PGDRV_FIXTURE", abs)
-	return NewDsh(dir, append(opts, Options{Version: "v1.0.0"})[0]), dir
+	return NewDsh(dir, append(opts, Options{})[0]), dir
 }
 
 // A spawn runs `dsh <args> --profile sdk --patch <overlay>` with the worker's session, model and
@@ -126,8 +126,8 @@ func TestDshStart(t *testing.T) {
 			t.Errorf("overlay lacks %q:\n%s", want, ov)
 		}
 	}
-	if v, ok := DshExtVersion(DshExtDir(dir)); !ok || v != "v1.0.0" {
-		t.Errorf("plugin copy version %q managed %v", v, ok)
+	if v, ok := DshExtVersion(DshExtDir(dir)); !ok || v != IntegrationVersion("dsh") {
+		t.Errorf("plugin copy version %d managed %v", v, ok)
 	}
 	// The real run's stdout: records only, no dsh frames.
 	for _, r := range recs {
@@ -219,18 +219,17 @@ func TestDshControl(t *testing.T) {
 	}
 }
 
-// The plugin copy is written once per version and never while current, the overlay is rewritten
-// each start, and a directory that is not piggery's is refused.
+// The plugin copy is written once and never while current, the overlay is rewritten each start, and a directory that is not piggery's is refused.
 func TestDshWorkerCopy(t *testing.T) {
 	dir := t.TempDir()
-	patch, err := EnsureDshWorker(dir, "v1", nil)
+	patch, err := EnsureDshWorker(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	entry := DshEntry(dir)
 	old := time.Now().Add(-time.Hour)
 	os.Chtimes(entry, old, old)
-	if _, err := EnsureDshWorker(dir, "v1", []string{"x"}); err != nil {
+	if _, err := EnsureDshWorker(dir, []string{"x"}); err != nil {
 		t.Fatal(err)
 	}
 	if fi, _ := os.Stat(entry); fi.ModTime().After(old.Add(time.Minute)) {
@@ -239,13 +238,13 @@ func TestDshWorkerCopy(t *testing.T) {
 	if b, _ := os.ReadFile(patch); !strings.Contains(string(b), "- id: 'x'") {
 		t.Errorf("overlay not rewritten:\n%s", b)
 	}
-	if up, err := UpdateDshExt(DshExtDir(dir), "v2"); err != nil || !up || !DshExtCurrent(DshExtDir(dir), "v2") {
-		t.Fatalf("update: %v, %v", up, err)
+	if up, err := UpdateDshExt(DshExtDir(dir)); err != nil || up {
+		t.Fatalf("update of a current copy: %v, %v", up, err)
 	}
 	other := t.TempDir()
 	os.MkdirAll(DshExtDir(other), 0o755)
 	os.WriteFile(filepath.Join(DshExtDir(other), "index.mjs"), []byte("// mine\n"), 0o644)
-	if _, err := EnsureDshWorker(other, "v1", nil); err == nil {
+	if _, err := EnsureDshWorker(other, nil); err == nil {
 		t.Error("a directory that is not piggery's was replaced")
 	}
 }

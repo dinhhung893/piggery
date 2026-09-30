@@ -4,7 +4,7 @@ import { Icon, ScrollView } from "@getpaseo/plugin/client/react-native";
 import { useState } from "react";
 import { Text, View } from "react-native";
 import { snapshot } from "../shared/rpc.ts";
-import { farm, latestEvents, PROTOCOL_VERSION, stateLook, type Ps, type Row as PigRow, type UnitView } from "../shared/view.ts";
+import { farm, latestEvents, PROTOCOL_VERSION, stateLook, summary, type Ps, type Row as PigRow, type UnitView } from "../shared/view.ts";
 import { Detail } from "./detail.tsx";
 import { Disclosure } from "./kit/disclosure.tsx";
 import { HarnessMark } from "./kit/harness-mark.tsx";
@@ -20,7 +20,7 @@ function useSnapshot(dir: string | undefined) {
   const call = useRpc(snapshot);
   return usePoll(async () => {
     const r = await call({ dir });
-    return r.ok ? { ok: true, value: { ps: r.ps as Ps, dir: r.dir ?? dir } } : r;
+    return r.ok ? { ok: true, value: { ps: r.ps as Ps, dir: r.dir ?? dir, outdated: r.outdated ?? "" } } : r;
   }, `snapshot:${dir ?? ""}`);
 }
 
@@ -169,6 +169,19 @@ function Events({ theme, ps }: { theme: PluginTheme; ps: Ps }) {
   );
 }
 
+/** top's header line: the daemon's age, teams, working and idle, held (amber when any) and unacked mail, its build version; under it, amber, what needs `piggery setup`. */
+function Status({ theme, ps, outdated }: { theme: PluginTheme; ps: Ps; outdated: string }) {
+  const s = summary(ps);
+  return (
+    <Text style={[text(theme, "meta"), { paddingHorizontal: SPACING[4], paddingTop: SPACING[3] }]} numberOfLines={3}>
+      {`daemon ${s.startedAt ? `${ago(s.startedAt)} up` : "up"} · ${s.teams} team${s.teams === 1 ? "" : "s"} · ${s.working} working · ${s.idle} idle · `}
+      <Text style={text(theme, "meta", s.held > 0 ? "statusWarning" : undefined)}>{`held ${s.held}`}</Text>
+      {` · unacked ${s.unacked}${s.version ? ` · ${s.version}` : ""}`}
+      {outdated ? <Text style={text(theme, "meta", "statusWarning")}>{`\n${outdated}`}</Text> : null}
+    </Text>
+  );
+}
+
 function Message({ theme, message, colour }: { theme: PluginTheme; message: string; colour?: "statusDanger" | "statusWarning" }) {
   return <Text style={[text(theme, "meta", colour), { padding: SPACING[4] }]}>{message}</Text>;
 }
@@ -199,6 +212,7 @@ function Farm({ theme, compact, dir, empty }: { theme: PluginTheme; compact: boo
       ) : null}
       {!ps && !error ? <Message theme={theme} message="Loading…" /> : null}
       {ps && projects.length === 0 ? <Message theme={theme} message={empty} /> : null}
+      {ps && dir === undefined ? <Status theme={theme} ps={ps} outdated={snap?.outdated ?? ""} /> : null}
       {projects.length > 0 ? <Header theme={theme} width={listWidth} /> : null}
       {projects.map((project) => (
         <View key={project.path}>

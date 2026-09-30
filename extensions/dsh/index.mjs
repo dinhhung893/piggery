@@ -553,7 +553,7 @@ async function startDaemon() {
 	const sock = join(dir, "piggery.sock");
 	await new Promise((resolve, reject) => {
 		const d = spawn("piggery", ["serve"], { detached: true, stdio: ["ignore", out, out] });
-		d.on("error", (e) => reject(new Error(e.code === "ENOENT" ? "the piggery binary is not on PATH (see docs/USAGE.md)" : e.message)));
+		d.on("error", (e) => reject(new Error(e.code === "ENOENT" ? "the piggery binary is not on PATH (see https://github.com/sting8k/piggery/blob/main/docs/guide.md)" : e.message)));
 		d.on("exit", () => (exited = true));
 		d.on("spawn", () => {
 			d.unref();

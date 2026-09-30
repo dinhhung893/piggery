@@ -91,14 +91,13 @@ func DshVersion(ctx context.Context, cmd string, args ...string) (string, error)
 // npx may install first).
 var dshStartWait = 120 * time.Second
 
-// NewDsh returns the dsh driver over dir; its workers load the plugin of opts.Version.
+// NewDsh returns the dsh driver over dir.
 func NewDsh(dir string, opts Options) *Driver {
-	return newWith(dir, opts, &dshCodec{dir: dir, version: opts.Version, state: map[*worker]*dshRun{}})
+	return newWith(dir, opts, &dshCodec{dir: dir, state: map[*worker]*dshRun{}})
 }
 
 type dshCodec struct {
-	dir     string
-	version string // this binary's: the worker's plugin copy is made current for it
+	dir string
 
 	mu    sync.Mutex
 	state map[*worker]*dshRun
@@ -156,7 +155,7 @@ func (c *dshCodec) launch(s core.Spec) (launch, error) {
 	if err != nil {
 		return launch{}, err
 	}
-	patch, err := EnsureDshWorker(c.dir, c.version, prof.Blacklist)
+	patch, err := EnsureDshWorker(c.dir, prof.Blacklist)
 	if err != nil {
 		return launch{}, fmt.Errorf("worker plugin: %w", err)
 	}

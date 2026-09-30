@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	paseoext "github.com/sting8k/piggery/extensions/paseo"
+	"github.com/sting8k/piggery/internal/driver/local"
 )
 
 // piggery's Paseo plugin (piggery top inside Paseo): `piggery setup paseo` writes the files
@@ -33,9 +34,9 @@ var paseoTarget = setupTarget{name: "paseo", cmd: "paseo", install: installPaseo
 
 func paseoDir(dir string) string { return filepath.Join(dir, "paseo") }
 
-// paseoFiles are the files of a copy written by version for the binary self, by slash path.
-func paseoFiles(version, self string) (map[string][]byte, error) {
-	files := map[string][]byte{"VERSION": []byte(version + "\n")}
+// paseoFiles are the files of the copy this binary writes for the binary self, by slash path.
+func paseoFiles(self string) (map[string][]byte, error) {
+	files := map[string][]byte{"VERSION": paseoVersionFile()}
 	err := fs.WalkDir(paseoext.Files, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -75,10 +76,10 @@ func paseoCurrent(dst string, files map[string][]byte) bool {
 	return err == nil && n == len(files)
 }
 
-// writePaseoPlugin writes the copy of version for self into dst unless it is there already, in
-// place of an earlier copy; it reports whether it wrote.
-func writePaseoPlugin(dst, version, self string) (bool, error) {
-	files, err := paseoFiles(version, self)
+// writePaseoPlugin writes the copy for self into dst unless it is there already, in place of an
+// earlier copy; it reports whether it wrote.
+func writePaseoPlugin(dst, self string) (bool, error) {
+	files, err := paseoFiles(self)
 	if err != nil {
 		return false, err
 	}
@@ -167,7 +168,7 @@ func installPaseo(o setupOpts) (string, error) {
 		return "", errors.New("paseo: `paseo` is not on PATH; install Paseo first")
 	}
 	dst := paseoDir(o.dir)
-	wrote, err := writePaseoPlugin(dst, Version, o.self)
+	wrote, err := writePaseoPlugin(dst, o.self)
 	if err != nil {
 		return "", err
 	}
@@ -177,7 +178,7 @@ func installPaseo(o setupOpts) (string, error) {
 	}
 	var msgs []string
 	if wrote {
-		msgs = append(msgs, fmt.Sprintf("paseo: wrote piggery's plugin (%s, running %s) to %s", Version, o.self, dst))
+		msgs = append(msgs, fmt.Sprintf("paseo: wrote piggery's plugin (v%d, running %s) to %s", local.IntegrationVersion("paseo"), o.self, dst))
 	}
 	run := func(args ...string) error {
 		if _, err := paseoRun(o.paseoHome, args...); err != nil {
@@ -269,10 +270,12 @@ func paseoStatus(o setupOpts) harnessState {
 	fix := "piggery setup paseo" + homeFlag("--paseo-home", o.paseoHome)
 	if !samePath(p.Path, dst) {
 		parts = append(parts, "from "+p.Path)
-	} else if files, err := paseoFiles(Version, o.self); err == nil && !paseoCurrent(dst, files) {
-		have, _ := os.ReadFile(filepath.Join(dst, "VERSION"))
-		st.Problems = append(st.Problems, problem{fmt.Sprintf("the plugin in %s (piggery %s) is not what this piggery (%s, %s) writes",
-			dst, firstNonEmpty(strings.TrimSpace(string(have)), "(unknown)"), Version, o.self), fix})
+	} else if files, err := paseoFiles(o.self); err == nil && !paseoCurrent(dst, files) {
+		if have, _ := paseoIntegration(dst); have < local.IntegrationVersion("paseo") {
+			st.Problems = append(st.Problems, problem{fmt.Sprintf("outdated (v%d < v%d)", have, local.IntegrationVersion("paseo")), "piggery setup --outdated" + homeFlag("--paseo-home", o.paseoHome)})
+		} else { // the same integer with other files, e.g. a plugin that runs another piggery
+			st.Problems = append(st.Problems, problem{fmt.Sprintf("the plugin in %s is not what this piggery (%s) writes", dst, o.self), fix})
+		}
 	}
 	if !p.Enabled {
 		st.Problems = append(st.Problems, problem{"the plugin is disabled", "paseo plugin enable " + paseoPluginID + homeFlag("--home", o.paseoHome)})

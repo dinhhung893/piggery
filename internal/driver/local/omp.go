@@ -45,14 +45,13 @@ var DefaultOmpProfile = Profile{Cmd: "omp", Args: []string{"--mode", "rpc"}, Mod
 // no MCP server from the project's root .mcp.json/mcp.json.
 const ompWorkerConfig = "mcp:\n  enableProjectConfig: false\n"
 
-// NewOmp returns the omp driver over dir; its workers load the extension of opts.Version.
+// NewOmp returns the omp driver over dir.
 func NewOmp(dir string, opts Options) *Driver {
-	return newWith(dir, opts, ompCodec{piCodec{dir: dir}, opts.Version})
+	return newWith(dir, opts, ompCodec{piCodec{dir: dir}})
 }
 
 type ompCodec struct {
 	piCodec
-	version string // this binary's: the worker's extension copy is made current for it
 }
 
 func (ompCodec) harness() string { return OmpHarness }
@@ -72,7 +71,7 @@ func (c ompCodec) launch(s core.Spec) (launch, error) {
 		return launch{}, err
 	}
 	args, skip := workerArgs(prof.Args)
-	entry, err := EnsureOmpWorkerExt(c.dir, c.version)
+	entry, err := EnsureOmpWorkerExt(c.dir)
 	if err != nil {
 		return launch{}, fmt.Errorf("worker extension: %w", err)
 	}

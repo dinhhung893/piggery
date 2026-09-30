@@ -7,14 +7,16 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 // A managed extension is one of piggery's own extensions written from the binary into a
 // directory a harness loads by itself (pi: <agent dir>/extensions/piggery). The first line of
-// its marker file says it is piggery's and names the version that wrote it; a directory there
-// without that line is not piggery's to replace or remove. pi and omp differ only in what the
-// files are, which file carries the marker, and the words of the messages.
+// its marker file says it is piggery's and carries the integration version (integration.go) of
+// what was written; a directory there without that line is not piggery's to replace or remove.
+// pi, omp and dsh differ only in what the files are, which file carries the marker, and the words
+// of the messages.
 type managedExt struct {
 	setup      string                            // `piggery setup <setup>` writes it
 	markerFile string                            // slash path (from the copy's root) of the file whose first line is the marker
@@ -24,31 +26,31 @@ type managedExt struct {
 
 const managedMarker = "// managed by piggery "
 
-// written are the files of a copy written by version: the marker line goes in front of the marker file.
-func (m managedExt) written(version string) (map[string][]byte, error) {
+// written are the files of a copy this binary writes: the marker line goes in front of the marker file.
+func (m managedExt) written() (map[string][]byte, error) {
 	files, err := m.files()
 	if err != nil {
 		return nil, err
 	}
-	line := managedMarker + version + ": written by `piggery setup " + m.setup + "`; run it again or `piggery setup remove " + m.setup + "` instead of editing\n"
+	line := managedMarker + IntegrationMarker + strconv.Itoa(IntegrationVersion(m.setup)) + ": written by `piggery setup " + m.setup + "`; run it again or `piggery setup remove " + m.setup + "` instead of editing\n"
 	files[m.markerFile] = append([]byte(line), files[m.markerFile]...)
 	return files, nil
 }
 
-// Version is the version of the managed copy at ext; managed is false when ext holds none.
-func (m managedExt) Version(ext string) (version string, managed bool) {
+// Version is the integration version of the managed copy at ext (0 for a copy from before the
+// integers, which carries a build version there); managed is false when ext holds none.
+func (m managedExt) Version(ext string) (version int, managed bool) {
 	b, err := os.ReadFile(filepath.Join(ext, filepath.FromSlash(m.markerFile)))
 	if err != nil || !bytes.HasPrefix(b, []byte(managedMarker)) {
-		return "", false
+		return 0, false
 	}
 	line, _, _ := strings.Cut(string(b[len(managedMarker):]), "\n")
-	v, _, _ := strings.Cut(line, ":")
-	return v, true
+	return ParseIntegration(line), true
 }
 
-// Current: the copy at ext holds exactly what version would write (no file more, none less).
-func (m managedExt) Current(ext, version string) bool {
-	files, err := m.written(version)
+// Current: the copy at ext holds exactly what this binary writes (no file more, none less).
+func (m managedExt) Current(ext string) bool {
+	files, err := m.written()
 	if err != nil {
 		return false
 	}
@@ -74,18 +76,18 @@ func (m managedExt) Current(ext, version string) bool {
 
 // Install writes the extension into ext, in place of a managed copy or of a symlink (an older way
 // to add piggery). Anything else there is refused. It reports whether it wrote.
-func (m managedExt) Install(ext, version string) (bool, error) {
+func (m managedExt) Install(ext string) (bool, error) {
 	if fi, err := os.Lstat(ext); err == nil {
 		if _, managed := m.Version(ext); fi.Mode()&os.ModeSymlink == 0 && !managed {
 			return false, fmt.Errorf("%s is not piggery's (no %q line): %s", ext, strings.TrimSpace(managedMarker), m.hint)
 		}
-		if m.Current(ext, version) {
+		if m.Current(ext) {
 			return false, nil
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
-	files, err := m.written(version)
+	files, err := m.written()
 	if err != nil {
 		return false, err
 	}
@@ -108,20 +110,15 @@ func (m managedExt) Install(ext, version string) (bool, error) {
 	return true, os.Rename(tmp, ext)
 }
 
-// Update (daemon start, like the templates): rewrites a managed copy at ext that is older than
-// version, or, when either is a dev build, that differs from what version writes. No copy, no
+// Update (daemon start, like the templates): rewrites a managed copy at ext whose integration
+// version is lower than this binary's. A copy at the same integer stays as it is (a rebuild does
+// not rewrite it), and so does one at a higher integer (another binary wrote it). No copy, no
 // change.
-func (m managedExt) Update(ext, version string) (bool, error) {
-	have, managed := m.Version(ext)
-	if !managed || m.Current(ext, version) {
+func (m managedExt) Update(ext string) (bool, error) {
+	if have, managed := m.Version(ext); !managed || have >= IntegrationVersion(m.setup) {
 		return false, nil
 	}
-	if a, okA := parseSemver(have); okA {
-		if b, okB := parseSemver(version); okB && !semverLess(a, b) {
-			return false, nil // the copy is as new or newer: another binary wrote it
-		}
-	}
-	return m.Install(ext, version)
+	return m.Install(ext)
 }
 
 // Remove deletes a managed copy (or a symlink) at ext; it reports whether there was one.

@@ -1,6 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { piggeryPath } from "./server/installed.ts";
-import { pickBin, realDir, runPiggery } from "./server/piggery.ts";
+import { outdatedNotice, pickBin, realDir, runPiggery } from "./server/piggery.ts";
 import { settings, snapshot, tail } from "./shared/rpc.ts";
 
 export default function contribute(server: PluginServerContext) {
@@ -11,10 +11,12 @@ export default function contribute(server: PluginServerContext) {
   };
 
   server.handle(snapshot, async ({ dir }) => {
-    const r = await runPiggery(await bin(), ["ps", "--json"]);
+    const b = await bin();
+    const r = await runPiggery(b, ["ps", "--json"]);
     if (!r.ok) return r;
     try {
-      return { ok: true as const, ps: JSON.parse(r.out) as Record<string, unknown>, dir: dir === undefined ? undefined : await realDir(dir) };
+      const ps = JSON.parse(r.out) as Record<string, unknown>;
+      return { ok: true as const, ps, dir: dir === undefined ? undefined : await realDir(dir), outdated: outdatedNotice(ps) };
     } catch {
       return { ok: false as const, code: "failed" as const, error: "piggery ps --json did not print JSON." };
     }

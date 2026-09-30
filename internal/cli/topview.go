@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/exp/charmtone"
 
 	"github.com/sting8k/piggery/internal/core"
+	"github.com/sting8k/piggery/internal/proto"
 	"github.com/sting8k/piggery/internal/server"
 )
 
@@ -234,6 +235,8 @@ func (m *topModel) render() string {
 	for _, l := range strings.Split(m.help.View(m.keys), "\n") {
 		foot = append(foot, " "+l)
 	}
+	notes, mismatch := versionNotes(m.ps.Version, Version)
+	foot[len(foot)-1] = withVersion(foot[len(foot)-1], notes, mismatch, width)
 
 	room := max(height-len(head)-len(foot), 6)
 	y := len(head)
@@ -328,10 +331,14 @@ func (m *topModel) header(now time.Time) string {
 	if m.ps.Held > 0 {
 		held = pill(fmt.Sprintf("held %d", m.ps.Held), colWarning, colInk)
 	}
-	return " " + lipgloss.NewStyle().Bold(true).Render(pill("🐷 piggery", colPrimary, colOnMain)) + " " +
+	head := " " + lipgloss.NewStyle().Bold(true).Render(pill("🐷 piggery", colPrimary, colOnMain)) + " " +
 		pill("● daemon "+ago(m.ps.StartedAt, now), colSurface, colSuccess) + " " +
 		stMuted.Render(fmt.Sprintf(" %s · %d working · %d idle ", plural(len(m.ps.Teams), "team"), working, idle)) +
 		held + " " + pill(fmt.Sprintf("unacked %d", m.ps.Unacked), colSurface, colMuted)
+	if n := proto.Notice(m.ps.Outdated); n != "" { // an install only `piggery setup --outdated` brings up to date
+		head += " " + pill(n, colWarning, colInk)
+	}
+	return head
 }
 
 func (m *topModel) tabBar(tabs []topTab, y int) string {
@@ -834,4 +841,32 @@ func truncate(s string, n int) string {
 		w += rw
 	}
 	return b.String() + "…"
+}
+
+// versionNotes are what top's footer can end with, longest first: the daemon's build version and,
+// when this binary is another build, the fix (`dev-9057651 (cli dev-99443dc: piggery restart)`, then
+// the version alone, amber). None when the daemon does not report a version.
+func versionNotes(daemon, self string) (notes []string, mismatch bool) {
+	switch {
+	case daemon == "":
+		return nil, false
+	case daemon != self:
+		return []string{daemon + " (cli " + self + ": piggery restart)", daemon}, true
+	}
+	return []string{daemon}, false
+}
+
+// withVersion right-aligns the first of notes that fits on the footer's last line, muted (amber
+// for a mismatch); when none fits beside the key hints, the version goes and the hints stay whole.
+func withVersion(line string, notes []string, mismatch bool, width int) string {
+	style := stMuted
+	if mismatch {
+		style = lipgloss.NewStyle().Foreground(colWarning)
+	}
+	for _, note := range notes {
+		if pad := width - lipgloss.Width(line) - lipgloss.Width(note) - 1; pad >= 2 {
+			return line + strings.Repeat(" ", pad) + style.Render(note)
+		}
+	}
+	return line
 }

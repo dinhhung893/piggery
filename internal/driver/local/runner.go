@@ -98,8 +98,6 @@ type Options struct {
 	// OnUnbatchedTurn is called when a turn no delivered batch started begins or ends
 	// (core.Engine.UnbatchedTurn).
 	OnUnbatchedTurn func(participantID, runID, event string)
-	// Version is this binary's version: the omp driver makes its workers' extension current for it.
-	Version string
 	// StopWait is how long Stop waits after closing stdin before SIGTERM (default 10s);
 	// TermWait how long after SIGTERM before SIGKILL (default 5s).
 	StopWait, TermWait time.Duration

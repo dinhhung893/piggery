@@ -5,6 +5,8 @@ package proto
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/sting8k/piggery/internal/core"
 )
@@ -44,9 +46,44 @@ const (
 
 // PsResult is the operator snapshot with the daemon's own pid and start time.
 type PsResult struct {
-	PID       int   `json:"pid"`
-	StartedAt int64 `json:"started_at"` // unix ms
+	PID       int    `json:"pid"`
+	StartedAt int64  `json:"started_at"`        // unix ms
+	Version   string `json:"version,omitempty"` // the daemon's build version (report only; "" when the binary does not set it)
+	// Outdated are the installs only `piggery setup --outdated` brings up (claude, codex, paseo),
+	// read from files on each call; absent when there are none.
+	Outdated []Outdated `json:"outdated,omitempty"`
 	core.State
+}
+
+// Outdated is one installed integration older than this binary's (or, for Codex, missing a hook).
+type Outdated struct {
+	Name  string `json:"name"`
+	Have  int    `json:"have"`            // the integer installed (0: from before the integers)
+	Want  int    `json:"want"`            // the integer this binary writes
+	Drift string `json:"drift,omitempty"` // same integer, other entries: what differs
+}
+
+// Detail is `v1 < v2`, or `v2: <drift>` when the integer is the binary's but the entries differ.
+func (o Outdated) Detail() string {
+	if o.Have < o.Want {
+		return fmt.Sprintf("v%d < v%d", o.Have, o.Want)
+	}
+	return fmt.Sprintf("v%d: %s", o.Have, o.Drift)
+}
+
+func (o Outdated) String() string { return o.Name + " (" + o.Detail() + ")" }
+
+// Notice is `outdated: claude (v1 < v2), codex (v0 < v1): piggery setup --outdated`, or "" for none.
+// It is the header line of ps and top and the status line of the Paseo plugin.
+func Notice(list []Outdated) string {
+	if len(list) == 0 {
+		return ""
+	}
+	what := make([]string, len(list))
+	for i, o := range list {
+		what[i] = o.String()
+	}
+	return "outdated: " + strings.Join(what, ", ") + ": piggery setup --outdated"
 }
 
 // TailResult is a worker's latest run and the path of its driver log (local to the daemon), or a

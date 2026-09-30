@@ -56,21 +56,21 @@ func piggeryEntry(raw json.RawMessage, path string) (string, bool) {
 // piHarness: pi's extension talks to the daemon itself (no hooks, no piggery mcp).
 var piHarness = harnessProfile{
 	setupTarget: setupTarget{name: "pi", cmd: "pi",
-		install: func(o setupOpts) (string, error) { return installPi(o.dir, o.ext, Version) },
+		install: func(o setupOpts) (string, error) { return installPi(o.dir, o.ext) },
 		remove:  func(o setupOpts) (string, error) { return removePi(o.dir) },
-		status:  func(o setupOpts) harnessState { return piStatus(o.dir, o.self, Version) },
+		status:  func(o setupOpts) harnessState { return piStatus(o.dir, o.self) },
 	},
 	profilePath: local.ProfilePath,
 }
 
-func installPi(dir, ext, version string) (string, error) {
+func installPi(dir, ext string) (string, error) {
 	path := piSettingsPath(dir)
 	var msgs []string
 	index := filepath.Join(ext, "index.ts")
 	if ext == "" {
 		dst := local.PiExtDir(dir)
 		index = filepath.Join(dst, "index.ts")
-		wrote, err := local.InstallPiExt(dst, version)
+		wrote, err := local.InstallPiExt(dst)
 		if err != nil {
 			return "", err
 		}
@@ -79,7 +79,7 @@ func installPi(dir, ext, version string) (string, error) {
 			return "", err
 		}
 		if wrote {
-			msgs = append(msgs, fmt.Sprintf("pi: installed piggery's extension (%s) in %s", version, dst))
+			msgs = append(msgs, fmt.Sprintf("pi: installed piggery's extension (v%d) in %s", local.IntegrationVersion("pi"), dst))
 		}
 		if len(old) > 0 {
 			msgs = append(msgs, fmt.Sprintf("pi: removed %s from %s (loaded twice otherwise)", strings.Join(old, ", "), path))
@@ -218,10 +218,11 @@ func setPiProfileExt(dir, index string) (bool, error) {
 	return true, writeFileAtomic(path, o.Set("args", raw).Bytes(0))
 }
 
-// piStatus: the installed copy (current for this binary) or a settings entry, never both; the
-// worker profile's extension present; `piggery` on PATH being this binary (the extension starts
-// the daemon with it).
-func piStatus(dir, self, version string) harnessState {
+// piStatus: the installed copy or a settings entry, never both; the worker profile's extension
+// present; `piggery` on PATH being this binary (the extension starts the daemon with it). That
+// the copy is older than this binary's integration version is added for every harness
+// (harnessStates).
+func piStatus(dir, self string) harnessState {
 	st := harnessState{Name: "pi"}
 	fix := "piggery setup pi"
 	path := piSettingsPath(dir)
@@ -246,10 +247,7 @@ func piStatus(dir, self, version string) harnessState {
 	}
 	switch {
 	case managed:
-		st.Installed, st.Detail = true, copyDir+" ("+have+")"
-		if !local.PiExtCurrent(copyDir, version) {
-			st.Problems = append(st.Problems, problem{fmt.Sprintf("the installed copy (%s) is not this piggery's (%s)", have, version), fix})
-		}
+		st.Installed, st.Detail = true, fmt.Sprintf("%s (v%d)", copyDir, have)
 	case len(entries) > 0:
 		st.Installed, st.Detail = true, "checkout "+strings.Join(entries, ", ")
 		for _, e := range entries {

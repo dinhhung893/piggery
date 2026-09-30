@@ -70,6 +70,10 @@ Or build it: `go install github.com/sting8k/piggery/cmd/piggery@latest` (Go 1.26
 2. Ask it for a team: *"make a supervisor-executor team to fix the failing tests"*.
 3. Watch the farm: `piggery top`.
 
+More: [docs/guide.md](docs/guide.md) covers running teams, watching and stepping in, and customizing
+`~/.piggery` (config, templates, worker profiles, your own rules); [docs/reference.md](docs/reference.md)
+lists every command, config key, profile key and manifest key.
+
 ## Farm layouts
 
 | Template | Who does what |
@@ -80,7 +84,7 @@ Or build it: `go install github.com/sting8k/piggery/cmd/piggery@latest` (Go 1.26
 | `p2p` | Peers that talk freely and spawn more peers. |
 
 Make your own: `piggery template new mine --from slp`, then edit
-`~/.piggery/templates/mine/manifest.yaml`.
+`~/.piggery/templates/mine/manifest.yaml` (see the [guide](docs/guide.md#customize-piggery-piggery)).
 
 ## Build from source
 
