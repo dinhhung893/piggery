@@ -79,7 +79,7 @@ func TestIntegrationVersionsFollowWhatIsInstalled(t *testing.T) {
 		{"dsh", 1, "974f29c461da"},
 		{"claude", 1, "ca51aeba0c80"},
 		{"codex", 1, "c914fad6023c"},
-		{"paseo", 1, "e5149332654d"},
+		{"paseo", 2, "ab202309b2f4"},
 	} {
 		if got := digestOf(trees[want.name]()); got != want.digest || local.IntegrationVersion(want.name) != want.version {
 			t.Errorf("changed %s: bump IntegrationVersion and update this digest (now v%d %s; table has v%d %s)",

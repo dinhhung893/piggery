@@ -595,3 +595,67 @@ func TestBuiltinToolsFromFile(t *testing.T) {
 		t.Fatal("no built-in manifests found")
 	}
 }
+
+// A tool call right after tools/list must find the connection: once ready is closed (tools/list
+// and every call wait on it) the identity and the connection that made it are both there. Fails
+// within a few -count runs when ready closes at identify, before the connection is kept.
+func TestMCPReadyMeansConnected(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pgmcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	startFakeDaemon(t, dir, func(verb string, _ json.RawMessage) any {
+		return core.IdentifyResult{ParticipantID: "P", RunID: "R", Tools: []string{"send"}}
+	})
+	for i := 0; i < 200; i++ {
+		s := &mcpServer{dir: dir, id: "P", token: "T", run: "R", out: io.Discard, ready: make(chan struct{})}
+		done := make(chan *daemonConn)
+		go func() {
+			c, _ := s.connect()
+			done <- c
+		}()
+		<-s.ready
+		if id, c := s.identityWithin(0); id == nil || c == nil {
+			t.Fatalf("round %d: ready is closed but identity = %v, conn = %v", i, id, c)
+		}
+		if c := <-done; c != nil {
+			c.close()
+		}
+	}
+}
+
+// A tool call while the daemon connection is down waits for the next one and runs on it, instead
+// of failing with "the connection dropped".
+func TestMCPCallWaitsThroughReconnect(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pgmcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	d := startFakeDaemon(t, dir, func(verb string, _ json.RawMessage) any {
+		if verb == proto.VerbSend {
+			return core.SendResult{Seq: 7}
+		}
+		return core.IdentifyResult{ParticipantID: "P", RunID: "R", Tools: []string{"send"}}
+	})
+	s := &mcpServer{dir: dir, id: "P", token: "T", run: "R", out: io.Discard, ready: make(chan struct{})}
+	go s.keepConnected()
+	send := func() (string, error) {
+		return s.callTool("send", json.RawMessage(`{"to":"lead","body":"hi"}`))
+	}
+	if txt, err := send(); err != nil || txt != "sent #7" {
+		t.Fatalf("first send = %q, %v", txt, err)
+	}
+	d.mu.Lock()
+	d.ident.Close() // the daemon goes away; keepConnected dials again after its delay
+	d.mu.Unlock()
+	waitFor(t, "the drop", func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.conn == nil || s.conn.isDead()
+	})
+	if txt, err := send(); err != nil || txt != "sent #7" {
+		t.Fatalf("send across the reconnect = %q, %v; want it to wait for the new connection", txt, err)
+	}
+}

@@ -359,3 +359,22 @@ func TestGCDropsAGoneSolo(t *testing.T) {
 		t.Fatalf("the dropped session coming back: %+v %v; want a new solo", j, err)
 	}
 }
+
+// A name shared with a gone member of a closed team resolves to the live one; when every match
+// is in a closed team the name is ambiguous as before (`piggery x kc`, 2026-09-30).
+func TestAdminNameSkipsGoneMembersOfClosedTeams(t *testing.T) {
+	f := newGCFixture(t, "a", "b")
+	if _, err := f.e.TeamDown(ctx, core.TeamDownArgs{Team: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := f.e.Kill(ctx, core.AdminTarget{Target: "lead2"})
+	if err == nil || !strings.Contains(err.Error(), "not a headless worker") { // resolved: b's session
+		t.Fatalf("kill lead2 with team a closed: %v; want it to reach b's lead2", err)
+	}
+	if _, err := f.e.TeamDown(ctx, core.TeamDownArgs{Team: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.e.Kill(ctx, core.AdminTarget{Target: "lead2"}); err == nil || !strings.Contains(err.Error(), "pass --team") {
+		t.Fatalf("kill lead2 with both teams closed: %v; want the ambiguity", err)
+	}
+}

@@ -73,7 +73,7 @@ type mcpServer struct {
 	mu        sync.Mutex
 	conn      *daemonConn
 	ident     *core.IdentifyResult
-	ready     chan struct{} // closed at the first identify
+	ready     chan struct{} // closed when the first identify is done and its connection is kept
 	listed    bool          // Claude has read the tool list (list_changed is worth sending)
 	nudges    int
 	identErr  error
@@ -119,6 +119,14 @@ func (s *mcpServer) keepConnected() {
 			for p := range c.pushes {
 				s.onPush(p)
 			}
+			// Dropped: a tool call now waits for the next connection (callTool) instead of
+			// writing to this one.
+			s.mu.Lock()
+			if s.conn == c {
+				s.conn = nil
+			}
+			s.mu.Unlock()
+			c.close()
 		} else if stale(err) && !(s.host != "" && s.ref == "" && ruleID(err) == "host.unknown") {
 			s.readyOnce.Do(func() { s.identErr = err; close(s.ready) })
 			return // another process owns this run, or the token is gone: stop driving it
@@ -170,6 +178,9 @@ func (s *mcpServer) connect() (*daemonConn, error) {
 	s.mu.Lock()
 	s.conn = c
 	s.mu.Unlock()
+	// Ready only now: what waits on it (tools/list, a tool call) takes the identity and the
+	// connection together, and one without the other fails the call.
+	s.readyOnce.Do(func() { close(s.ready) })
 	return c, nil
 }
 
@@ -194,7 +205,6 @@ func (s *mcpServer) identify(c *daemonConn) error {
 	notify := changed && s.listed
 	s.ident = &r
 	s.mu.Unlock()
-	s.readyOnce.Do(func() { close(s.ready) })
 	if notify {
 		s.write(map[string]any{"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
 	}
@@ -413,6 +423,9 @@ func (s *mcpServer) identity() (*core.IdentifyResult, *daemonConn) {
 	return s.identityWithin(10 * time.Second)
 }
 
+// mcpConnectWait is how long a tool call waits for a connection to the daemon (a restart).
+const mcpConnectWait = 10 * time.Second
+
 func (s *mcpServer) identityWithin(d time.Duration) (*core.IdentifyResult, *daemonConn) {
 	select {
 	case <-s.ready:
@@ -422,6 +435,9 @@ func (s *mcpServer) identityWithin(d time.Duration) (*core.IdentifyResult, *daem
 	defer s.mu.Unlock()
 	if s.listed = true; s.ident == nil {
 		return nil, nil
+	}
+	if s.conn != nil && s.conn.isDead() {
+		return s.ident, nil
 	}
 	return s.ident, s.conn
 }
@@ -453,14 +469,18 @@ func baseTool(name string) map[string]any {
 
 func (s *mcpServer) callTool(name string, raw json.RawMessage) (string, error) {
 	id, c := s.identity()
-	if (id == nil || c == nil) && s.host != "" && s.identErr == nil {
-		// The model called a piggery tool, so its user wants piggery: start the daemon (as the
-		// CLI does) and wait for this server to be placed.
-		if cl, err := Dial(s.dir, true); err == nil {
-			cl.Close()
+	// No connection now: a session the Human opened asks for the daemon (the model called a piggery
+	// tool, so its user wants piggery); a worker that was placed before waits for keepConnected to
+	// dial again (the daemon restarted). A call already written to a connection that then dropped
+	// is not here: it fails as it did, since the old daemon may have run it.
+	if (id == nil || c == nil) && s.identErr == nil && (s.host != "" || id != nil) {
+		if s.host != "" {
+			if cl, err := Dial(s.dir, true); err == nil {
+				cl.Close()
+			}
 		}
-		for i := 0; i < 50 && (id == nil || c == nil); i++ {
-			time.Sleep(200 * time.Millisecond)
+		for end := time.Now().Add(mcpConnectWait); time.Now().Before(end) && (id == nil || c == nil); {
+			time.Sleep(50 * time.Millisecond)
 			id, c = s.identityWithin(0)
 		}
 	}
@@ -621,6 +641,15 @@ func (c *daemonConn) read() {
 }
 
 func (c *daemonConn) close() { c.cl.Close() }
+
+func (c *daemonConn) isDead() bool {
+	select {
+	case <-c.dead:
+		return true
+	default:
+		return false
+	}
+}
 
 // call sends one request and decodes its result into out (nil: ignore it).
 func (c *daemonConn) call(verb string, args, out any) error {

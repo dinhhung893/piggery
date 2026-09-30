@@ -13,7 +13,7 @@ var integrationVersions = map[string]int{
 	"dsh":    1,
 	"claude": 1,
 	"codex":  1,
-	"paseo":  1,
+	"paseo":  2,
 }
 
 // IntegrationMarker precedes the integer in what is installed.

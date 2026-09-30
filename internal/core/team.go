@@ -5,6 +5,9 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"errors"
+	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -35,7 +38,27 @@ func (e *Engine) TeamUp(ctx context.Context, a TeamUpArgs) (Team, error) {
 		team, err = t.insertTeam(name, a.Manifest, m, cwd)
 		return err
 	})
+	if err == nil {
+		team.Warnings = manifestWarnings(m)
+	}
 	return team, err
+}
+
+// manifestWarnings are what a manifest allows but probably does not mean: a role that pins a model
+// or a thinking level while its harness is inherit. Model names and levels belong to one harness,
+// so the pin holds only when the worker happens to run on it. Sorted by role; team up still works.
+func manifestWarnings(m manifest) []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(m.Roles)) {
+		sp := m.Roles[name].Spawn
+		for _, pin := range []struct{ key, val, what string }{{"model", sp.Model, "model names"}, {"thinking", sp.Thinking, "thinking levels"}} {
+			if pin.val != "" && sp.Harness == "" {
+				out = append(out, fmt.Sprintf("role %q sets spawn.%s %q but spawn.harness is inherit: %s belong to one harness, so pin spawn.harness too",
+					name, pin.key, pin.val, pin.what))
+			}
+		}
+	}
+	return out
 }
 
 // validManifest parses a manifest and checks everything TeamUp refuses.

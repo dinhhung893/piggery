@@ -439,7 +439,13 @@ func (s *server) handle(ctx context.Context, cn *conn, req proto.Request) proto.
 		}
 		switch req.Verb {
 		case proto.VerbTeamUp:
-			return call(req, func(a core.TeamUpArgs) (any, error) { return s.eng.TeamUp(ctx, a) })
+			return call(req, func(a core.TeamUpArgs) (any, error) {
+				team, err := s.eng.TeamUp(ctx, a)
+				for _, w := range team.Warnings {
+					s.log.Warn("team up", "team", team.Name, "warning", w)
+				}
+				return team, err
+			})
 		case proto.VerbPs:
 			return call(req, func(a core.StateArgs) (any, error) {
 				st, err := s.eng.State(ctx, a)
@@ -589,6 +595,9 @@ func (s *server) handle(ctx context.Context, cn *conn, req proto.Request) proto.
 			r, err := s.eng.Agent(ctx, c, a)
 			if err == nil && a.Action == core.AgentClose {
 				s.retireTeam(r.TeamID, cn)
+			}
+			for _, w := range r.Warnings {
+				s.log.Warn("found", "team", r.TeamName, "warning", w)
 			}
 			return r, err
 		})

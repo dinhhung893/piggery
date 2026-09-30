@@ -27,6 +27,14 @@ export const tail = defineRpc({
 
 export const RPC_NAMES = [snapshot.name, tail.name];
 
+/** What the user folded in the list (shared/folds.ts): kept per Paseo host, saved by the app after a change. */
+export const viewSettings = defineSettings({
+  id: "piggery-view",
+  scope: "host",
+  version: 1,
+  schema: z.object({ teams: z.record(z.string(), z.boolean()).default({}), gone: z.record(z.string(), z.boolean()).default({}), eventsOpen: z.boolean().default(false) }),
+});
+
 /** A piggery binary the user chose; empty uses the one that installed the plugin, else PATH. */
 export const settings = defineSettings({
   id: "piggery",

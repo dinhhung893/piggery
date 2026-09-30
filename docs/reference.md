@@ -18,7 +18,7 @@ you (admin, read from `~/.piggery/admin.token`) and start the daemon if it is no
 | `team down <team>` | Close a team: workers stopped, nothing acked |
 | `template new <name> [--from <built-in>]` | Copy a built-in (default `p2p`) to `~/.piggery/templates/<name>` |
 | `ps [--json]` | Daemon, teams, members, solo sessions and pending mail, once |
-| `top` | The same, live, with context, turns and the latest events; `↑/↓` select, `enter` shows a tail, `x` kills the selected headless worker (asks once) |
+| `top` | The same, live, with context, turns and the latest events; `↑/↓` select (`PgUp`/`PgDn`, `Home`/`End` in a long list, which scrolls under its header; `↑ N`/`↓ N` on the border count hidden lines), `enter` opens or closes (a member's details, a team's members, a team's gone-members line; kept for the next `top`), `t` switches Overview and Tail, `e` opens the events list (folded to the latest event by default; kept for the next `top`), `x` kills the selected headless worker (asks once) |
 | `tail <worker> [-n N] [-f] [--team T]` | A worker's log or a session's transcript, readable; `--json` raw |
 | `log [--after SEQ] [--team T] [--limit N]` | Decisions and lifecycle events |
 | `abort <x> [--team T]` | Cancel x's current turn; it stays alive |
@@ -58,7 +58,7 @@ Environment: `PIGGERY_DISABLED=1` makes an adapter inert (a session that must no
 | `harness` | `pi` | Harness of a worker whose role and founding session name none: `pi`, `claude`, `codex`, `omp`, `dsh` |
 | `gc.closed_after` | `14d` | Delete (after archiving) a team closed, or a solo session gone, longer than this: `14d`, `36h`, or `off` |
 | `gc.archive_keep` | `30d` | Delete gc archives older than this, or `off`; also for a manual gc |
-| `display.columns` | `[role, state, harness, model, ctx, turns, unacked, age, since, cwd]` | Columns `top` and `ps` show after the name, in order; **live**, read on every run. An unknown name warns and shows the defaults; `-` where a row has no value, `model` is the id without its provider, `cwd` is blank in the project directory itself |
+| `display.columns` | `[role, state, harness, model, ctx, turns, unacked, age, since, cwd]` | Columns `top` and `ps` show after the name, in order (`top` has no `unacked` column: its header, team lines and details give it); **live**, read on every run. An unknown name warns and shows the defaults; `-` where a row has no value, `model` is the id without its provider, `cwd` is blank in the project directory itself |
 | `spawn.allowed_roots` | `[]` | Absolute directories outside a team's root where a worker may be placed with a `cwd` (the root and its repo's git worktrees always may) |
 | `prompts` | `[]` | Your files by role: a list of `{file, roles}`; `file` is relative to `~/.piggery` or absolute; `roles` are `<role>`, `<template>/<role>` or `solo`. The list needs a restart; a file is read at each session start. A bad entry is skipped with a line in `serve.log` |
 

@@ -111,6 +111,7 @@ func TestPsJSONMatchesTop(t *testing.T) {
 				ids = append(ids, closedRow+u.ID)
 				continue
 			}
+			ids = append(ids, closedRow+u.ID) // an open team's line
 			for _, m := range u.Members {
 				ids = append(ids, m.ID)
 				if m.ID == "w" && (m.Ctx == nil || *m.Ctx != 12345 || m.Turns == nil || *m.Turns != 2) {

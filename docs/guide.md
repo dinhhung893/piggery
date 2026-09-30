@@ -56,7 +56,7 @@ editing it changes the next team only.
 
 ```sh
 piggery ps                    # teams, members and solo sessions by project, once
-piggery top                   # the same, live, with each one's context, turns and latest events
+piggery top                   # the same, live, with context, turns and latest events (enter folds a team)
 piggery tail w1 -n 50 -f      # a worker's log (or a session's transcript), readable; -f follows
 piggery abort w1              # cancel its current turn (like Esc); it stays alive
 piggery model w1 HP/kimi-k3   # its model from the next turn; --thinking high for the level
@@ -68,6 +68,8 @@ piggery team down demo        # close a team: workers stopped, nothing is acked
 The target is a name or an id (`--team T` when a name is in several teams). `ps` and `top` only
 read, except `x` in `top`. In `top`, a member's current task sits under its name: the latest mail marked as an
 assignment from whoever it reports to, and whether it handed back.
+Gone members with nobody live below them fold into one `✗ N gone` line per team (`ps` too); `enter`
+on a team or on that line folds or opens it, and `top` remembers it.
 
 **Emergency stop.** `x` in `top` on the selected worker (it asks `kill <name>? y/n` once), or
 `piggery x <worker>`, kills it. Kill asks first: SIGTERM to the worker, so its harness and extensions
@@ -167,7 +169,9 @@ harness: claude        # pi, claude, codex, omp or dsh
 **Model and thinking for a harness's workers, or for one role.** A worker runs the first of: the
 role's `spawn.model` in the template, the harness profile's `model`, the model of the session that
 began the spawn chain, the harness default. `inherit` (the default) means "keep going down the
-chain". Thinking follows the same chain, in the harness's own levels.
+chain". Thinking follows the same chain, in the harness's own levels. Pin the harness when you pin
+a model: names and levels belong to one harness (`team up` warns when a role sets `spawn.model` or
+`spawn.thinking` and leaves `spawn.harness` as `inherit`).
 
 ```jsonc
 // harness/claude.json: every Claude worker

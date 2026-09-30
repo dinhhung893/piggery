@@ -62,7 +62,7 @@ func (e *env) columns() ([]string, error) {
 type psLine struct {
 	text   string
 	worker string
-	kind   string // daemon, team, member, solo
+	kind   string // daemon, team, member, gone (a team's gone members, one line), solo
 }
 
 // psLines is ps's text, by project directory as top lists (groupByDir): each directory, then its
@@ -117,7 +117,8 @@ func psLines(r proto.PsResult, now time.Time, stats map[string]workerStats, cols
 			}
 			out = append(out, psLine{kind: "team", text: fmt.Sprintf("  team %s  gate=%s  held=%d unacked=%d",
 				t.Name, gate, t.Held, t.Unacked)})
-			for _, row := range memberTree(t.Members) {
+			kept, gone := foldGone(t.Members) // the gone ones with nobody live below them are one line
+			for _, row := range memberTree(kept) {
 				m := row.m
 				var tags []string
 				if m.Gate {
@@ -145,6 +146,13 @@ func psLines(r proto.PsResult, now time.Time, stats map[string]workerStats, cols
 				}
 				out = append(out, psLine{kind: "member", worker: worker, text: strings.TrimRight(fmt.Sprintf("    %-22s%s last turn %-9s %s",
 					row.prefix+m.Name, fields(val), turn, strings.Join(tags, " ")), " ")})
+			}
+			if len(gone) > 0 {
+				var last int64
+				for _, g := range gone {
+					last = max(last, g.StateSince)
+				}
+				out = append(out, psLine{kind: "gone", text: fmt.Sprintf("    %-22s✗ gone  for %s", plural(len(gone), "member"), since(last, now))})
 			}
 		}
 	}

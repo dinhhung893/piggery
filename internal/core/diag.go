@@ -91,9 +91,11 @@ func (e *Engine) readOnly(ctx context.Context, fn func(t *txn) error) error {
 }
 
 // participantForAdmin resolves a participant by id, or by name within team (id or name) when
-// given; a name in several teams without team is invalid.
+// given; a name in several teams without team is invalid, unless all but one of the matches are
+// gone members of closed teams (what is left of a finished team is not a rival for the name).
 func (t *txn) participantForAdmin(who, team string) (participant, error) {
-	q := `SELECT ` + participantCols + ` FROM participants WHERE (id=? OR name=?)`
+	q := `SELECT ` + participantCols + `, COALESCE((SELECT closed_at IS NOT NULL FROM teams WHERE id=participants.team_id), 0)
+		FROM participants WHERE (id=? OR name=?)`
 	args := []any{who, who}
 	if team != "" {
 		q += ` AND team_id IN (SELECT id FROM teams WHERE id=? OR name=?)`
@@ -104,16 +106,23 @@ func (t *txn) participantForAdmin(who, team string) (participant, error) {
 		return participant{}, internal(err)
 	}
 	defer rows.Close()
-	var found []participant
+	var found, live []participant
 	for rows.Next() {
-		p, err := scanParticipant(rows)
+		var closed bool
+		p, err := scanParticipant(rows, &closed)
 		if err != nil {
 			return participant{}, internal(err)
 		}
 		found = append(found, p)
+		if !closed || p.state != "gone" {
+			live = append(live, p)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return participant{}, internal(err)
+	}
+	if len(live) > 0 {
+		found = live
 	}
 	switch len(found) {
 	case 0:

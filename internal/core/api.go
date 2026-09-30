@@ -112,6 +112,8 @@ type Team struct {
 	Template  string `json:"template"`
 	RootCwd   string `json:"root_cwd"`
 	CreatedAt int64  `json:"created_at"`
+	// Warnings are things in the manifest that work but are probably not meant (see manifestWarnings).
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type JoinArgs struct {

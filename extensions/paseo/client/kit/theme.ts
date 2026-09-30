@@ -35,6 +35,9 @@ export const SEGMENT = { height: 32, inset: 2, paddingX: 8 } as const;
 /** One tree level's indent. */
 export const INDENT = SPACING[4];
 
+/** A disclosure's chevron and the gap after it: what a team's members are indented by, so their marks start under the team's icon. */
+export const CHEVRON_SLOT = ICON_SIZE.sm + SPACING[2];
+
 /** top's columns, in its order, with their widths; the name takes what is left. */
 export const COLUMNS = [
   { key: "role", label: "Role", width: 96 },
@@ -43,7 +46,6 @@ export const COLUMNS = [
   { key: "model", label: "Model", width: 140 },
   { key: "ctx", label: "Ctx", width: 56 },
   { key: "turns", label: "Turns", width: 52 },
-  { key: "unacked", label: "Unread", width: 60 },
   { key: "age", label: "Age", width: 48 },
   { key: "since", label: "Since", width: 48 },
   { key: "cwd", label: "Cwd", width: 120 },
@@ -52,7 +54,40 @@ export const COLUMNS = [
 export type ColumnKey = (typeof COLUMNS)[number]["key"];
 
 /** Narrower than these list widths, a column hides (never wraps): cwd first, the state last. */
-export const HIDE_BELOW: Record<ColumnKey, number> = { cwd: 1100, age: 1000, turns: 940, ctx: 880, harness: 800, role: 720, model: 600, since: 500, unacked: 380, state: 0 };
+export const HIDE_BELOW: Record<ColumnKey, number> = { cwd: 1100, age: 1000, turns: 940, ctx: 880, harness: 800, role: 720, model: 600, since: 500, state: 0 };
+
+/** A column of numbers: right-aligned. */
+export const numeric = (key: ColumnKey) => key === "ctx" || key === "turns" || key === "age" || key === "since";
+
+/** The columns that fit a list this wide, in top's order; `cwd` false leaves Cwd out (no row has one). */
+export function columnsFor(width: number, cwd = true) {
+  return COLUMNS.filter((c) => width >= HIDE_BELOW[c.key] && (cwd || c.key !== "cwd"));
+}
+
+/**
+ * An event's fields sit in the member columns they fall under, whichever columns the list width shows:
+ * its type under Role and State, its target under Harness to Turns, its time under Age and Since.
+ * Together the slots cover the shown columns in order, so each event field starts and ends where a
+ * member column does.
+ */
+export const EVENT_SLOTS: { what: "type" | "target" | "time" | "rest"; keys: ColumnKey[] }[] = [
+  { what: "type", keys: ["role", "state"] },
+  { what: "target", keys: ["harness", "model", "ctx", "turns"] },
+  { what: "time", keys: ["age", "since"] },
+  { what: "rest", keys: ["cwd"] },
+];
+
+/** The width of the columns of `keys` that a list this wide shows; 0 when none is. */
+export function slotWidth(width: number, keys: ColumnKey[], cwd = true): number {
+  return columnsFor(width, cwd).filter((c) => keys.includes(c.key)).reduce((sum, c) => sum + c.width, 0);
+}
+
+/** A left-aligned column whose left neighbour, among the shown ones, is right-aligned: it gets room (Cell `apart`). */
+export function apart(width: number, key: ColumnKey, cwd = true): boolean {
+  const cols = columnsFor(width, cwd);
+  const i = cols.findIndex((c) => c.key === key);
+  return i > 0 && !numeric(key) && numeric(cols[i - 1].key);
+}
 
 /** The name column's least width. */
 export const NAME_MIN = 140;

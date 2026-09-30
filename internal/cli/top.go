@@ -77,23 +77,24 @@ type topModel struct {
 	dir     string              // the daemon's dir: worker logs are read here (driver/local.LogPath)
 	logs    map[string]logState // worker run logs read so far, by path
 	ps      proto.PsResult
-	loaded  bool            // a snapshot has arrived
-	tab     string          // "" All, a team id, or tabClosed; a tab that went away falls back to All
-	sel     string          // selected member or solo (participant id), "" when the tab has none
-	side    bool            // the sidebar is shown beside the list (wide terminal)
-	full    bool            // the sidebar is shown instead of the list (narrow terminal)
-	sideTab int             // sideOverview or sideTail
-	events  bool            // the events strip is shown
-	mouse   bool            // clicks and the wheel are captured (off: the terminal selects text)
-	open    map[string]bool // closed teams expanded, by team id
-	hits    []hit           // the clickable spans of the last frame
+	loaded  bool     // a snapshot has arrived
+	tab     string   // "" All, a team id, or tabClosed; a tab that went away falls back to All
+	sel     string   // selected member or solo (participant id), "" when the tab has none
+	side    bool     // the sidebar is shown beside the list (wide terminal)
+	full    bool     // the sidebar is shown instead of the list (narrow terminal)
+	sideTab int      // sideOverview or sideTail
+	events  bool     // the events strip is shown
+	mouse   bool     // clicks and the wheel are captured (off: select text)
+	fold    topState // the teams the user opened or folded and the gone members expanded, remembered (topstate.go)
+	hits    []hit    // the clickable spans of the last frame
+	scroll  int      // the list's first drawn body line (below the sticky header); moves when the selection would leave the body
+	page    int      // the list's body height in the last frame, for PgUp/PgDn
 	tail    tailState
 	keys    topKeys
 	help    help.Model
 	w, h    int
 	err     error // a daemon error ends top with it
 
-	sized    bool                  // the first window size has arrived
 	kill     func(id string) error // kills a worker (the same verb as `piggery kill`, on a connection of its own)
 	killing  killAsk               // the worker `x` asked about, until y or another key
 	killNote string                // the answer to the last `x`, until the next key
@@ -110,7 +111,8 @@ type killed struct {
 
 const (
 	tabClosed    = "\x00closed" // not a team id
-	closedRow    = "\x00team:"  // + team id: the selectable line of a team listed as one line
+	closedRow    = "\x00team:"  // + team id: the selectable line of a team (a live one, or listed as one line)
+	goneRow      = "\x00gone:"  // + team id: the selectable line of a team's folded gone members
 	closedRecent = time.Hour    // All shows teams closed this recently
 	sideOverview = 0
 	sideTail     = 1
@@ -121,13 +123,16 @@ func newTopModel(c *Client, dir string) *topModel {
 	h.Styles = helpStyles()
 	h.ShortSeparator = "   "
 	// Its first read starts from what ps --json last read (logcache.go), not from the start of each log.
-	return &topModel{c: c, dir: dir, side: true, events: true, mouse: true, open: map[string]bool{}, keys: newTopKeys(), help: h,
+	fold := loadTopState(dir)
+	return &topModel{c: c, dir: dir, side: true, events: fold.Events, mouse: true, fold: fold, keys: newTopKeys(), help: h,
 		cols: server.DisplayColumns, logs: loadLogCache(dir)}
 }
 
 // topKeys are top's keys; the footer shows the short list, ? the full one.
 type topKeys struct {
 	Next, Prev, Up, Down, Preview, Pane, Close, Events, Mouse, Kill, Help, Quit key.Binding
+	PgUp, PgDown, Home, End                                                     key.Binding // ? only
+	mouseOn                                                                     bool        // what the m entry says
 }
 
 func newTopKeys() topKeys {
@@ -139,14 +144,19 @@ func newTopKeys() topKeys {
 		Prev:    b([]string{"left", "h", "shift+tab"}, "tab/⇧tab", "next/previous tab"),
 		Up:      b([]string{"up", "k"}, "↑/↓", "select"),
 		Down:    b([]string{"down", "j"}, "↑/↓", "select"),
-		Preview: b([]string{"enter"}, "enter", "details"),
+		Preview: b([]string{"enter"}, "enter", "open/close"),
 		Pane:    b([]string{"t"}, "t", "overview/tail"),
 		Close:   b([]string{"esc"}, "esc", "back"),
 		Events:  b([]string{"e"}, "e", "events"),
-		Mouse:   b([]string{"m"}, "m", "mouse/select text"),
+		Mouse:   b([]string{"m"}, "m", "mouse"),
 		Kill:    b([]string{"x"}, "x", "kill worker"),
 		Help:    b([]string{"?"}, "?", "help"),
 		Quit:    b([]string{"q", "ctrl+c"}, "q", "quit"),
+		mouseOn: true,
+		PgUp:    b([]string{"pgup", "ctrl+b"}, "pgup/pgdn", "page"),
+		PgDown:  b([]string{"pgdown", "ctrl+f"}, "pgup/pgdn", "page"),
+		Home:    b([]string{"home", "g"}, "home/end", "first/last"),
+		End:     b([]string{"end", "G"}, "home/end", "first/last"),
 	}
 }
 
@@ -159,14 +169,23 @@ func (k topKeys) look() []key.Binding {
 }
 
 func (k topKeys) act() []key.Binding {
-	mouse := key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mouse"))
+	// it says its state, in a cell as wide for "on" as for "off", so the grid does not shift
+	mouse := key.NewBinding(key.WithKeys("m"), key.WithHelp("m", fmt.Sprintf("%-9s", "mouse "+onOff(k.mouseOn))))
 	all := key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "all keys"))
 	kill := key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "kill"))
 	return []key.Binding{kill, k.Events, mouse, all, k.Quit}
 }
 
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
+}
+
 func (k topKeys) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Next, k.Prev}, {k.Down}, {k.Preview, k.Pane, k.Close}, {k.Events, k.Mouse, k.Kill, k.Help, k.Quit}}
+	k.Mouse.SetHelp("m", "mouse "+onOff(k.mouseOn)+" (off: select text)")
+	return [][]key.Binding{{k.Next, k.Prev}, {k.Down, k.PgUp, k.Home}, {k.Preview, k.Pane, k.Close}, {k.Events, k.Mouse, k.Kill, k.Help, k.Quit}}
 }
 
 // tailState follows one log incrementally: a worker's run log or a session's transcript.
@@ -266,9 +285,6 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
-		if !m.sized { // a short window starts with the events collapsed; `e` is the user's after that
-			m.sized, m.events = true, msg.Height >= 30
-		}
 	case killed:
 		m.killNote = "killed " + msg.name
 		if msg.err != nil {
@@ -298,10 +314,16 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.move(-1)
 		case key.Matches(msg, k.Down):
 			m.move(1)
+		case key.Matches(msg, k.PgUp):
+			m.move(-max(m.page, 1))
+		case key.Matches(msg, k.PgDown):
+			m.move(max(m.page, 1))
+		case key.Matches(msg, k.Home):
+			m.move(-len(m.items()))
+		case key.Matches(msg, k.End):
+			m.move(len(m.items()))
 		case key.Matches(msg, k.Preview):
-			if id, ok := strings.CutPrefix(m.sel, closedRow); ok {
-				m.open[id] = !m.open[id]
-			} else {
+			if !m.toggleRow(m.sel) {
 				m.toggleSide()
 			}
 		case key.Matches(msg, k.Pane):
@@ -315,8 +337,11 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help.ShowAll = false
 		case key.Matches(msg, k.Events):
 			m.events = !m.events
+			m.fold.Events = m.events // remembered when opened: the default is folded
+			saveTopState(m.dir, m.fold, teamIDs(m.ps))
 		case key.Matches(msg, k.Mouse):
 			m.mouse = !m.mouse
+			m.keys.mouseOn = m.mouse
 		case key.Matches(msg, k.Help):
 			m.help.ShowAll = !m.help.ShowAll
 		}
@@ -498,9 +523,70 @@ func dead(t core.TeamState) bool {
 }
 
 // oneLine reports whether the current tab lists u as one line (closedRow + its team id), its
-// members only when expanded (m.open): a closed team, or in All a dead open team.
+// members only when expanded: a closed team, or in All a dead open team.
 func (m *topModel) oneLine(u unit) bool {
 	return u.closed != nil || u.team != nil && m.tab == "" && dead(*u.team)
+}
+
+// teamOpen reports whether team id lists its members: the user's choice, else def.
+func (m *topModel) teamOpen(id string, def bool) bool {
+	if v, ok := m.fold.Teams[id]; ok {
+		return v
+	}
+	return def
+}
+
+// teamOpenByDefault: a live team is open; a dead or closed one is one line until opened.
+func (m *topModel) teamOpenByDefault(id string) bool {
+	for _, t := range m.ps.Teams {
+		if t.ID == id {
+			return !dead(t)
+		}
+	}
+	return false
+}
+
+// toggleRow opens or closes what the row id stands for (a team's line, or its gone members' line)
+// and remembers it; false when id is neither.
+func (m *topModel) toggleRow(id string) bool {
+	if team, ok := strings.CutPrefix(id, closedRow); ok {
+		def := m.teamOpenByDefault(team)
+		if open := !m.teamOpen(team, def); open == def {
+			delete(m.fold.Teams, team) // only a choice that differs from the default is remembered
+		} else {
+			m.fold.Teams[team] = open
+		}
+	} else if team, ok := strings.CutPrefix(id, goneRow); ok {
+		if m.fold.Gone[team] {
+			delete(m.fold.Gone, team)
+		} else {
+			m.fold.Gone[team] = true
+		}
+	} else {
+		return false
+	}
+	saveTopState(m.dir, m.fold, teamIDs(m.ps))
+	return true
+}
+
+// teamView is what a live team lists of its members: their tree rows, and the gone members it
+// folds into one line after them (none: no such line). With the line expanded the gone members
+// are in rows, in their place in the tree.
+type teamView struct {
+	rows []treeRow
+	gone []core.MemberState
+	open bool // the fold line is expanded
+}
+
+func (m *topModel) membersOf(t core.TeamState) teamView {
+	kept, gone := foldGone(t.Members)
+	switch {
+	case len(gone) == 0 || dead(t): // a dead team lists every member: its line is the fold
+		return teamView{rows: memberTree(t.Members)}
+	case m.fold.Gone[t.ID]:
+		return teamView{rows: memberTree(t.Members), gone: gone, open: true}
+	}
+	return teamView{rows: memberTree(kept), gone: gone}
 }
 
 // recent reports whether c closed within closedRecent of now (All lists it).
@@ -563,8 +649,8 @@ func (m *topModel) groups() []dirGroup {
 }
 
 // items are the selectable ids of the current tab, in display order (list): per directory and
-// unit, a team's members as its tree, the line of a closed or dead team (then its members when
-// expanded), a solo.
+// unit, a team's line (in All) and its members as their tree when it is open, then the line of
+// its folded gone members; the line of a closed or dead team (then its members when expanded); a solo.
 func (m *topModel) items() []string {
 	var ids []string
 	for _, g := range m.groups() {
@@ -574,14 +660,24 @@ func (m *topModel) items() []string {
 				ids = append(ids, u.solo.ID)
 			case m.oneLine(u):
 				ids = append(ids, closedRow+u.team.ID)
-				if m.open[u.team.ID] {
+				if m.teamOpen(u.team.ID, false) {
 					for _, r := range memberTree(u.team.Members) {
 						ids = append(ids, r.m.ID)
 					}
 				}
 			default:
-				for _, r := range memberTree(u.team.Members) {
+				if m.tab == "" {
+					ids = append(ids, closedRow+u.team.ID)
+					if !m.teamOpen(u.team.ID, true) {
+						continue
+					}
+				}
+				v := m.membersOf(*u.team)
+				for _, r := range v.rows {
 					ids = append(ids, r.m.ID)
+				}
+				if len(v.gone) > 0 {
+					ids = append(ids, goneRow+u.team.ID)
 				}
 			}
 		}
@@ -604,9 +700,14 @@ func (m *topModel) keepSel() {
 		return
 	}
 	m.sel, m.tail = "", tailState{}
-	if len(ids) > 0 {
-		m.sel = ids[0]
+	if len(ids) > 0 { // the first member or solo (its details show at once), else the first line
+		m.sel = ids[max(slices.IndexFunc(ids, func(id string) bool { return !isLine(id) }), 0)]
 	}
+}
+
+// isLine: id is a team's line or its gone members' line, not a member or a solo.
+func isLine(id string) bool {
+	return strings.HasPrefix(id, closedRow) || strings.HasPrefix(id, goneRow)
 }
 
 // move selects the previous/next row of the tab.
@@ -635,10 +736,9 @@ func (m *topModel) click(x, y int) {
 	case !ok:
 	case h.side >= 0:
 		m.side, m.sideTab = true, h.side
-	case strings.HasPrefix(h.id, closedRow):
+	case strings.HasPrefix(h.id, closedRow) || strings.HasPrefix(h.id, goneRow):
 		m.sel = h.id
-		id := strings.TrimPrefix(h.id, closedRow)
-		m.open[id] = !m.open[id]
+		m.toggleRow(h.id)
 	case h.id != "" && h.id == m.sel:
 		m.toggleSide()
 	case h.id != "":

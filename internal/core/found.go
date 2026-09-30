@@ -110,6 +110,7 @@ func (e *Engine) found(ctx context.Context, c Caller, a AgentArgs) (AgentResult,
 	if notice != "" {
 		e.notifyHookAfterCommit(notice)
 	}
+	res.Warnings = manifestWarnings(m)
 	return res, nil
 }
 

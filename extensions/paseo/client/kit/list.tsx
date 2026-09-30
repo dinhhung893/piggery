@@ -53,10 +53,14 @@ export function ListRow({ theme, onPress, selected, expanded, children }: { them
   );
 }
 
-/** A cell of fixed width in the meta role; `right` for numbers. */
-export function Cell({ theme, width, right, colour, head, children }: { theme: PluginTheme; width: number; right?: boolean; colour?: keyof PluginTheme["colors"]; head?: boolean; children: ReactNode }) {
+/**
+ * A cell of fixed width in the meta role; `right` for numbers, in tabular figures so they line up down a column.
+ * `apart` is a left-aligned cell right after a right-aligned one: more room on its left, inside its width, so the
+ * two columns do not touch and no right edge moves.
+ */
+export function Cell({ theme, width, right, apart, colour, head, children }: { theme: PluginTheme; width: number; right?: boolean; apart?: boolean; colour?: keyof PluginTheme["colors"]; head?: boolean; children: ReactNode }) {
   return (
-    <Text style={[text(theme, head ? "label" : "meta", colour), { width, textAlign: right ? "right" : "left", paddingLeft: SPACING[2] }]} numberOfLines={1}>
+    <Text style={[text(theme, head ? "label" : "meta", colour), { width, textAlign: right ? "right" : "left", paddingLeft: apart ? SPACING[4] : SPACING[2], fontVariant: right ? ["tabular-nums"] : undefined }]} numberOfLines={1}>
       {children}
     </Text>
   );

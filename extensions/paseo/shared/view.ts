@@ -54,6 +54,7 @@ export interface Team {
   root?: string;
   gate?: string;
   held?: number;
+  unacked?: number;
   created_at?: number;
   members: Member[];
 }
@@ -121,6 +122,8 @@ export function stateLook(state: string): { status: Status; word: string } {
       return { status: "waiting", word: "waiting" };
     case "gone":
       return { status: "gone", word: "gone" };
+    case "requested": // the state is `requested`; the word is what it is for a person, as top says it
+      return { status: "waiting", word: "queued" };
   }
   return { status: "waiting", word: state };
 }
@@ -150,8 +153,12 @@ export interface Row {
   lastTurn?: number;
   /** Relative to the project, "" in the project directory itself. */
   cwd: string;
+  /** The team's gate: its name carries a muted `gate` tag, the team line does not name it. */
+  gate: boolean;
   /** Dim like top: gone, or under a gone lead. */
   dim: boolean;
+  /** A gone member with nobody live below it: the list folds it into its team's one gone line. */
+  folded?: boolean;
   /** Its team's name, null for a solo. */
   team: string | null;
   /** "pi headless worker · gate", "pi session", "solo". */
@@ -186,6 +193,10 @@ export interface UnitView {
   /** A closed team's when and by whom (an empty `closedBy` is the admin). */
   closedAt?: number;
   closedBy?: string;
+  /** A live team's members by state, as top's collapsed line says them: `1 working · 2 idle · 6 gone`, and `unacked N`. */
+  counts?: string;
+  /** A live team's folded gone members (their rows have `folded`): names in tree order, and when the last went. */
+  goneLine?: { names: string[]; last: number };
   rows: Row[];
 }
 
@@ -194,6 +205,27 @@ export interface ProjectView {
   title: string;
   path: string;
   units: UnitView[];
+}
+
+/** Whether any row of the snapshot (folded, gone and closed ones too) has a directory to show: the Cwd column exists only then. */
+export function hasCwd(ps: Ps): boolean {
+  return (ps.projects ?? []).some((p) => p.units.some((u) => !!u.cwd || (u.members ?? []).some((m) => !!m.cwd)));
+}
+
+/** A team's members by state, then its unacked mail, as top's collapsed team line (parts with a zero are left out). */
+export function countsLine(team: Team): string {
+  const n = (state: (s: string) => boolean) => team.members.filter((m) => state(m.state)).length;
+  const parts = [
+    [n((s) => s === "working"), "working"],
+    [n((s) => s === "idle"), "idle"],
+    [n((s) => s !== "working" && s !== "idle" && s !== "gone"), "waiting"],
+    [n((s) => s === "gone"), "gone"],
+  ]
+    .filter(([count]) => count !== 0)
+    .map(([count, what]) => `${count} ${what}`);
+  if (parts.length === 0) parts.push("no members");
+  if ((team.unacked ?? 0) > 0) parts.push(`unacked ${team.unacked}`);
+  return parts.join(" · ");
 }
 
 /** An open team with members, every one of them gone: top lists it as one folded line. */
@@ -276,6 +308,7 @@ export function farm(ps: Ps, dir?: string): ProjectView[] {
           created: s.created_at,
           since: s.state_since,
           cwd: unit.cwd ?? "",
+          gate: false,
           dim: false,
           team: null,
           kind: "solo",
@@ -295,6 +328,13 @@ export function farm(ps: Ps, dir?: string): ProjectView[] {
       if (!team) continue;
       const members = new Map(team.members.map((m) => [m.id, m]));
       const gone = new Set(team.members.filter((m) => m.state === "gone").map((m) => m.id));
+      // Gone members with no live descendant fold into one line, as top's; a gone lead above a live worker keeps its place.
+      const liveBelow = new Set<string>();
+      for (const m of team.members) {
+        if (m.state === "gone") continue;
+        for (let up = m.reports_to, seen = 0; up && seen <= team.members.length; up = members.get(up)?.reports_to, seen++) liveBelow.add(up);
+      }
+      const foldable = closedTeam || isDead(team) ? new Set<string>() : new Set(team.members.filter((m) => m.state === "gone" && !liveBelow.has(m.id)).map((m) => m.id));
       const rows = (unit.members ?? []).flatMap((place): Row[] => {
         const m = members.get(place.id);
         if (!m) return [];
@@ -318,7 +358,9 @@ export function farm(ps: Ps, dir?: string): ProjectView[] {
             since: m.state_since,
             lastTurn: m.last_turn_end || undefined,
             cwd: place.cwd,
+            gate: m.gate === true,
             dim: closedTeam !== undefined || m.state === "gone" || (m.reports_to !== undefined && gone.has(m.reports_to)),
+            folded: foldable.has(m.id) || undefined,
             team: team.name,
             kind,
             came,
@@ -332,12 +374,14 @@ export function farm(ps: Ps, dir?: string): ProjectView[] {
         ];
       });
       const gate = team.gate ? (name.get(team.gate) ?? team.gate) : "";
+      const folded = rows.filter((r) => r.folded);
+      const goneLine = folded.length > 0 ? { names: folded.map((r) => r.name), last: Math.max(...team.members.filter((m) => foldable.has(m.id)).map((m) => m.state_since ?? 0)) } : undefined;
       units.push(
         closedTeam
           ? { kind: "closed", id: team.id, title: team.name, gate, held: 0, open: false, closedAt: closedTeam.closed_at, closedBy: closedTeam.closed_by ?? "", rows }
           : isDead(team)
             ? { kind: "team", id: team.id, title: team.name, gate, held: team.held ?? 0, open: false, dead: { lastActive: lastActive(team), members: team.members.length }, rows }
-            : { kind: "team", id: team.id, title: team.name, gate, held: team.held ?? 0, open: true, rows },
+            : { kind: "team", id: team.id, title: team.name, gate, held: team.held ?? 0, open: true, counts: countsLine(team), goneLine, rows },
       );
     }
     out.push({ title: project.label.replace(/^…\//, ""), path: project.path, units });

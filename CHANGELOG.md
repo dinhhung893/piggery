@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.5.3 - 2026-09-30
+
+Big teams stay readable in `piggery top`, and a worker's piggery tool call survives a daemon restart.
+
+After upgrading, reload the Paseo app if you use its plugin (its integration is now 2; `piggery setup
+--outdated` updates it).
+
+- `piggery top`: Enter opens or closes everywhere: a team (live ones too), the gone line, a member's
+  details; `t` only switches Overview/Tail. A collapsed team is one line with its working/idle/gone
+  counts and held mail, and top remembers which teams you opened or closed (`<dir>/cache/top.json`).
+- Gone members with no live worker under them fold into one dim row at the bottom of their team
+  (`▸ N members  ✗ gone  <since>`, on the columns), in `top`, `piggery ps` and the Paseo plugin;
+  Enter expands it. A team's members are indented under the team's title, and the list no longer
+  has an unacked column (the header, details and a folded team still show it).
+- `piggery top` and the Paseo plugin: all-gone and closed teams are rows on the columns
+  (`▸ team old  ✗ gone  15h`), a solo row has a team row's shape, and the state column keeps one
+  width whatever the states, so the layout depends only on the window.
+- `piggery top` and the Paseo plugin: the gate is tagged on its member (`summer-hamster (gate)`)
+  instead of on the team line; a requested worker shows as `◌ queued` (ps keeps `requested`); the
+  cwd column shows only when someone works outside their group's directory.
+- `piggery top` scrolls a long list under a column header that stays put, with `↑ N` / `↓ N` on the
+  border for rows out of view; PgUp/PgDn and Home/End (`? all keys`). Opening, closing or scrolling
+  never moves a column, and a collapsed team line drops whole parts to fit instead of being cut.
+- `piggery top`: the footer says whether the mouse is captured (`m mouse on` / `m mouse off`), and
+  events show their time (`14:12:05` today, `09-29 14:12` before) instead of how long ago. Events
+  start folded; `e` opens them and top remembers it.
+- Paseo plugin, like top: Events fold (folded by default), event times, a folded team shows its
+  counts, and folds are remembered on the Paseo host.
+- `team up` warns when a role pins `spawn.model` or `spawn.thinking` but leaves `harness: inherit`:
+  a model name belongs to one harness.
+- Fix: a Claude Code or Codex worker's piggery tool call made while the daemon restarts waits up to
+  10 seconds for the connection and then runs, instead of failing. A call already sent when the
+  connection dropped still fails, so nothing runs twice.
+- Fix: a tool call right after the first connect could fail with "piggery is not reachable right
+  now".
+- Fix: `piggery x <name>` (and abort, model, resume, tail) no longer refuses a name when the other
+  matches are gone members of closed teams; the live participant wins.
+
 ## v0.5.2 - 2026-09-30
 
 Fix: `x` and `kill` now stop the command a worker is running, not only the worker.

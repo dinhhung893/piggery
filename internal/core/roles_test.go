@@ -321,3 +321,22 @@ func TestLegacyModelKeyInAStoredManifest(t *testing.T) {
 		t.Fatalf("card %q, %v", id.RoleCard, err)
 	}
 }
+
+// A role that pins a model or thinking level while its harness is inherit gets a warning at team
+// up (the names belong to one harness); pinning the harness too silences it. Never a refusal.
+func TestPinnedModelNeedsHarnessWarns(t *testing.T) {
+	db, err := store.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	e := core.New(db)
+	team, err := e.TeamUp(ctx, core.TeamUpArgs{Manifest: planDev, Cwd: t.TempDir()})
+	if err != nil || len(team.Warnings) != 2 || !strings.Contains(team.Warnings[0], `role "dev" sets spawn.model "small"`) {
+		t.Fatalf("warnings %q, %v; want dev's model and thinking pins", team.Warnings, err)
+	}
+	pinned := strings.Replace(planDev, "spawn: {model", "spawn: {harness: pi, model", 1)
+	if team, err = e.TeamUp(ctx, core.TeamUpArgs{Manifest: pinned, Name: "pinned", Cwd: t.TempDir()}); err != nil || len(team.Warnings) != 0 {
+		t.Fatalf("warnings %q, %v; want none with the harness pinned", team.Warnings, err)
+	}
+}

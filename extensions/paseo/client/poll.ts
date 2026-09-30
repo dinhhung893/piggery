@@ -55,6 +55,17 @@ export function usePoll<T>(load: () => Promise<{ ok: true; value: T } | { ok: fa
   return state;
 }
 
+/** An event's local time, as top: 15:04:05 today, 01-02 15:04 on an earlier day; "" when unknown. */
+export function clock(ms: number | undefined): string {
+  if (!ms) return "";
+  const t = new Date(ms);
+  const now = new Date();
+  const two = (n: number) => String(n).padStart(2, "0");
+  const time = `${two(t.getHours())}:${two(t.getMinutes())}`;
+  if (t.toDateString() === now.toDateString()) return `${time}:${two(t.getSeconds())}`;
+  return `${two(t.getMonth() + 1)}-${two(t.getDate())} ${time}`;
+}
+
 /** Time since `ms` in one unit: 12s, 4m, 3h, 2d; "" when unknown. */
 export function ago(ms: number | undefined): string {
   if (!ms) return "";

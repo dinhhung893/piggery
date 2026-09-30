@@ -1,10 +1,11 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { piggeryPath } from "./server/installed.ts";
 import { outdatedNotice, pickBin, realDir, runPiggery } from "./server/piggery.ts";
-import { settings, snapshot, tail } from "./shared/rpc.ts";
+import { settings, snapshot, tail, viewSettings } from "./shared/rpc.ts";
 
 export default function contribute(server: PluginServerContext) {
   const stored = server.registerSettings(settings);
+  server.registerSettings(viewSettings);
   const bin = async () => {
     const state = await stored.read();
     return pickBin(state.status === "ready" ? state.values.path : "", piggeryPath);

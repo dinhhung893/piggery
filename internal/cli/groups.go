@@ -96,6 +96,36 @@ func groupByDir(teams []core.TeamState, closed []core.ClosedTeam, solos []core.S
 	return out
 }
 
+// foldGone splits a team's members into those listed and the gone ones folded into one line: a
+// gone member with no live member below it (by reports_to) folds; one above a live member stays,
+// so the tree is kept. Both keep the order of ms; memberTree of kept never orphans a member.
+func foldGone(ms []core.MemberState) (kept, folded []core.MemberState) {
+	byID := map[string]core.MemberState{}
+	for _, m := range ms {
+		byID[m.ID] = m
+	}
+	above := map[string]bool{} // live members and everyone they report to
+	for _, m := range ms {
+		if m.State == "gone" {
+			continue
+		}
+		for id := m.ID; id != "" && !above[id]; id = byID[id].ReportsTo {
+			above[id] = true
+			if _, ok := byID[id]; !ok {
+				break
+			}
+		}
+	}
+	for _, m := range ms {
+		if m.State == "gone" && !above[m.ID] {
+			folded = append(folded, m)
+		} else {
+			kept = append(kept, m)
+		}
+	}
+	return kept, folded
+}
+
 // deepestRoot is the longest root that is cwd or holds it; none: cwd itself.
 func deepestRoot(cwd string, roots []string) string {
 	best := ""

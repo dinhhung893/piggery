@@ -5,8 +5,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { piggeryPath } from "../server/installed.ts";
 import { outdatedNotice, pickBin, realDir, runPiggery } from "../server/piggery.ts";
-import { RPC_NAMES } from "../shared/rpc.ts";
-import { farm, latestEvents, summary, tailLines, tokens, type Ps } from "../shared/view.ts";
+import { foldsOf, goneOpen, NO_FOLDS, prune, setEvents, setGone, setTeam, teamOpen } from "../shared/folds.ts";
+import { RPC_NAMES, viewSettings } from "../shared/rpc.ts";
+import { apart, columnsFor, EVENT_SLOTS, slotWidth } from "../client/kit/theme.ts";
+import { clock } from "../client/poll.ts";
+import { countsLine, farm, hasCwd, latestEvents, stateLook, summary, tailLines, tokens, type Ps } from "../shared/view.ts";
 
 // A real `piggery ps --json`, paths made neutral.
 const ps = JSON.parse(readFileSync(new URL("./fixtures/ps.json", import.meta.url), "utf8")) as Ps;
@@ -43,6 +46,15 @@ test("a team whose members are all gone starts folded, and unfolded again when o
   const back: Ps = { ...ps, teams: [{ ...ps.teams![0], members: [{ ...lead, state: "idle" }, ...rest] }] };
   const live = farm(back)[1].units[0];
   assert.deepEqual([live.open, live.dead], [true, undefined]);
+});
+
+test("in a live team the gone members with nobody live below them fold into one line; a gone lead above a live worker stays", () => {
+  const [lead, w1, w2] = ps.teams![0].members;
+  const live: Ps = { ...ps, teams: [{ ...ps.teams![0], members: [lead, { ...w1, state: "idle" }, w2] }] };
+  const team = farm(live)[1].units[0];
+  assert.deepEqual(team.rows.map((r) => [r.name, !!r.folded]), [["pi-1366de", false], ["dev-1", false], ["dev-2", true]]);
+  assert.deepEqual([team.goneLine?.names, team.goneLine?.last], [["dev-2"], w2.state_since]);
+  assert.equal(farm(ps)[1].units[0].goneLine, undefined, "a dead team is one folded line already");
 });
 
 test("farm for a workspace keeps the projects at, inside or around its directory", () => {
@@ -228,4 +240,88 @@ test("a workspace reached through a symlink matches the directory piggery record
   assert.deepEqual(farm(recorded, join(base, "link")), [], "the workspace path as given does not match");
   assert.deepEqual(farm(recorded, await realDir(join(base, "link"))).map((p) => p.path), [join(base, "shop")]);
   assert.equal(await realDir(join(base, "nowhere")), join(base, "nowhere"));
+});
+
+test("an event's time is the local clock: seconds today, month-day and minutes on an earlier day", () => {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 4, 5);
+  const earlier = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 0);
+  assert.equal(clock(today.getTime()), "09:04:05");
+  assert.equal(clock(earlier.getTime()), `${String(earlier.getMonth() + 1).padStart(2, "0")}-${String(earlier.getDate()).padStart(2, "0")} 23:59`);
+  assert.equal(clock(undefined), "");
+});
+
+test("a folded live team says its members by state and its unacked mail, as top's collapsed line", () => {
+  const [lead, w1, w2] = ps.teams![0].members;
+  const team = { ...ps.teams![0], unacked: 2, members: [{ ...lead, state: "working" }, { ...w1, state: "idle" }, { ...w2, state: "gone" }, { ...w2, id: "x", state: "gone" }] };
+  assert.equal(countsLine(team), "1 working · 1 idle · 2 gone · unacked 2");
+  assert.equal(countsLine({ ...team, unacked: 0, members: [] }), "no members");
+  assert.equal(farm({ ...ps, teams: [team] })[1].units[0].counts, "1 working · 1 idle · 2 gone · unacked 2");
+});
+
+test("folds are kept as differences from the defaults, restored from the host's setting, and dropped with their team", () => {
+  let f = setTeam(NO_FOLDS, "live", false, true); // a live team folded
+  f = setTeam(f, "dead", false, false); // the default again: nothing to keep
+  f = setGone(f, "live", true);
+  f = setGone(setEvents(f, true), "vanished", true); // Events opened
+  f = setTeam(f, "vanished", false, true);
+  assert.deepEqual(f.teams, { live: false, vanished: false });
+  const saved = prune(f, ["live", "dead"]);
+  assert.deepEqual(saved, { teams: { live: false }, gone: { live: true }, eventsOpen: true });
+  const back = foldsOf(viewSettings.schema.parse(JSON.parse(JSON.stringify(saved))));
+  assert.deepEqual([teamOpen(back, "live", true), teamOpen(back, "dead", false), goneOpen(back, "live"), back.eventsOpen], [false, false, true, true]);
+  assert.deepEqual(foldsOf(viewSettings.schema.parse({})), NO_FOLDS, "a new install starts unfolded");
+  assert.equal(setEvents(back, false).eventsOpen, false);
+  assert.equal(foldsOf(viewSettings.schema.parse({ events: true })).eventsOpen, false, "the old key (events: true meant folded) does not come back as open");
+});
+
+test("an event's fields fall under member columns at every list width: the slots cover the shown columns in order", () => {
+  for (const width of [1400, 1100, 1050, 1000, 950, 900, 850, 800, 760, 700, 620, 550, 450, 300]) {
+    const slots = EVENT_SLOTS.map((s) => slotWidth(width, s.keys));
+    assert.equal(slots.reduce((a, b) => a + b, 0), columnsFor(width).reduce((a, c) => a + c.width, 0), `at ${width}`);
+    // each slot starts where its first shown column starts
+    let at = 0;
+    const starts = new Map<string, number>();
+    for (const c of columnsFor(width)) {
+      starts.set(c.key, at);
+      at += c.width;
+    }
+    let slotAt = 0;
+    EVENT_SLOTS.forEach((s, i) => {
+      const first = columnsFor(width).find((c) => s.keys.includes(c.key));
+      if (first) assert.equal(slotAt, starts.get(first.key), `${s.what} at ${width}`);
+      slotAt += slots[i];
+    });
+  }
+  assert.equal(slotWidth(1400, ["age", "since"]), 96, "the time slot is Age and Since");
+});
+
+test("a left-aligned column right after a right-aligned one is set apart, at every width", () => {
+  for (const width of [1400, 1100, 1050, 1000, 940, 800, 600, 400]) {
+    const cols = columnsFor(width);
+    const apartKeys = cols.filter((c) => apart(width, c.key)).map((c) => c.key);
+    assert.deepEqual(apartKeys, width >= 1100 ? ["cwd"] : [], `at ${width}`);
+  }
+  assert.equal(apart(1400, "model"), false, "model follows harness, a left column");
+});
+
+test("the gate member's row carries the gate flag; no other row does, and a solo never", () => {
+  const [lead, ...rest] = ps.teams![0].members;
+  const gated: Ps = { ...ps, teams: [{ ...ps.teams![0], members: [{ ...lead, gate: true }, ...rest] }] };
+  const rows = farm(gated).flatMap((p) => p.units.flatMap((u) => u.rows));
+  assert.deepEqual(rows.filter((r) => r.gate).map((r) => r.name), [lead.name]);
+});
+
+test("requested reads as queued, and the Cwd column exists only while some row (a folded gone one too) has a directory", () => {
+  assert.equal(stateLook("requested").word, "queued");
+  assert.equal(hasCwd(ps), false, "the fixture's rows are all in their directories");
+  const unit = ps.projects![1].units[0];
+  const withCwd = (id: string): Ps => ({
+    ...ps,
+    projects: [ps.projects![0], { ...ps.projects![1], units: [{ ...unit, members: unit.members!.map((m) => (m.id === id ? { ...m, cwd: "sub" } : m)) }] }],
+  });
+  const gone = ps.teams![0].members.find((m) => m.state === "gone")!;
+  assert.equal(hasCwd(withCwd(gone.id)), true);
+  assert.equal(columnsFor(1400, false).some((c) => c.key === "cwd"), false);
+  assert.equal(slotWidth(1400, ["cwd"], false), 0, "event rows' trailing spacer goes with the column");
 });

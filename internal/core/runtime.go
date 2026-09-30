@@ -263,4 +263,5 @@ type AgentResult struct {
 	TeamName      string            `json:"team_name,omitempty"`      // found: the new team; close: the team closed
 	Stopped       []string          `json:"stopped,omitempty"`        // close: workers stopped
 	Failed        []string          `json:"failed,omitempty"`         // close: workers whose stop failed
+	Warnings      []string          `json:"warnings,omitempty"`       // found: as Team.Warnings
 }
