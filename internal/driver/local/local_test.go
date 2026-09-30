@@ -24,7 +24,10 @@ const fixture = "../../../testdata/fixtures/pi-0.87.1-rpc-glm-5.3-flash.jsonl"
 // TestHelperProcess is the fake worker (not a test): PGDRV_HELPER selects its behaviour.
 //   - replay: report env/args, replay captured pi rpc stdout, ask a confirm dialog, echo the
 //     answer read from stdin, then exit 0 when stdin closes.
-//   - stubborn: ignore stdin EOF and SIGTERM, start a grandchild in the same process group.
+//   - stubborn: ignore stdin EOF and SIGTERM, start a grandchild in the same process group and
+//     another in a process group of its own (as pi's bash tool does for each command).
+//   - polite: on SIGTERM exit 0 at once (as pi does), leaving a grandchild in a process group of
+//     its own for the driver to sweep.
 //   - rpc: echo each stdin line as probe_in; answer set_model by id (modelId "bad" refused);
 //     keep a thinking level from --thinking and set_thinking_level, "bogus" running as "high"
 //     as pi does (accepted with a warning), and report it in get_state.
@@ -94,13 +97,29 @@ func TestHelperProcess(t *testing.T) {
 			}
 		}
 		os.Exit(0)
+	case "polite":
+		term := make(chan os.Signal, 1)
+		signal.Notify(term, syscall.SIGTERM)
+		own := exec.Command("sleep", "60")
+		own.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := own.Start(); err != nil {
+			os.Exit(3)
+		}
+		emit(map[string]any{"type": "probe_child", "pid": own.Process.Pid, "own": own.Process.Pid})
+		<-term
+		os.Exit(0)
 	case "stubborn":
 		signal.Ignore(syscall.SIGTERM)
 		child := exec.Command("sleep", "60")
 		if err := child.Start(); err != nil {
 			os.Exit(3)
 		}
-		emit(map[string]any{"type": "probe_child", "pid": child.Process.Pid})
+		own := exec.Command("sleep", "60")
+		own.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := own.Start(); err != nil {
+			os.Exit(3)
+		}
+		emit(map[string]any{"type": "probe_child", "pid": child.Process.Pid, "own": own.Process.Pid})
 		for {
 			time.Sleep(time.Hour) // not select{}: with no other goroutine that is a fatal deadlock
 		}
@@ -221,26 +240,35 @@ func TestWorkerEnvTailAndDialogCancel(t *testing.T) {
 	}
 }
 
-func TestStopEscalatesToKillingTheProcessGroup(t *testing.T) {
+func TestStopEscalatesToKillingTheWholeTree(t *testing.T) {
 	d, dir := newDriver(t, "stubborn", Options{StopWait: 300 * time.Millisecond, TermWait: 300 * time.Millisecond})
 	ctx := context.Background()
 	if _, err := d.Start(ctx, core.Spec{ParticipantID: "p2", RunID: "r2", Token: "tok", Cwd: dir, HarnessRef: "sess-2"}); err != nil {
 		t.Fatal(err)
 	}
 	child, _ := waitRecord(t, d, "p2", "probe_child")
-	gc := int(child["pid"].(float64))
 
 	ex, err := d.Stop(ctx, "p2")
 	if err != nil || ex.Code != -1 || ex.Signal != "SIGKILL" {
 		t.Fatalf("stop = %+v, %v; want SIGKILL after stdin close and SIGTERM were ignored", ex, err)
 	}
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		if err := syscall.Kill(gc, 0); errors.Is(err, syscall.ESRCH) {
-			break
-		}
-		if time.Now().After(deadline) {
-			syscall.Kill(gc, syscall.SIGKILL)
-			t.Fatalf("grandchild %d in the worker's process group survived stop", gc)
+	expectGone(t, child, "stop")
+}
+
+// expectGone fails unless both grandchildren of the stubborn helper (in the worker's group, and
+// in a group of their own) are dead soon after what ended the worker.
+func expectGone(t *testing.T, child map[string]any, what string) {
+	t.Helper()
+	for _, k := range []string{"pid", "own"} {
+		pid := int(child[k].(float64))
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+			if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+				break
+			}
+			if time.Now().After(deadline) {
+				syscall.Kill(pid, syscall.SIGKILL)
+				t.Fatalf("grandchild %d (%s) survived %s", pid, k, what)
+			}
 		}
 	}
 }
@@ -353,27 +381,36 @@ func TestAbortAndSetModel(t *testing.T) {
 	}
 }
 
-// Kill ends a group that ignores stdin EOF and SIGTERM at once, grandchild included.
-func TestKillIsImmediate(t *testing.T) {
-	d, dir := newDriver(t, "stubborn", Options{StopWait: time.Minute, TermWait: time.Minute})
+// Kill asks with SIGTERM: a worker that exits on it returns at once, well before the grace, with
+// its own exit (not SIGKILL's), and what it left behind is swept.
+func TestKillAsksBeforeForcing(t *testing.T) {
+	d, dir := newDriver(t, "polite", Options{KillWait: time.Minute})
+	ctx := context.Background()
+	if _, err := d.Start(ctx, core.Spec{ParticipantID: "p7", RunID: "r7", Token: "tok", Cwd: dir, HarnessRef: "sess-7"}); err != nil {
+		t.Fatal(err)
+	}
+	child, _ := waitRecord(t, d, "p7", "probe_child")
+	start := time.Now()
+	ex, err := d.Kill(ctx, "p7")
+	if err != nil || ex.Code != 0 || time.Since(start) > 10*time.Second {
+		t.Fatalf("kill = %+v, %v after %s; want the worker's own exit soon after SIGTERM", ex, err, time.Since(start))
+	}
+	expectGone(t, child, "kill")
+}
+
+// A worker that ignores SIGTERM is SIGKILLed after the grace, its grandchildren included, even
+// one in a process group of its own.
+func TestKillForcesAfterTheGrace(t *testing.T) {
+	d, dir := newDriver(t, "stubborn", Options{StopWait: time.Minute, TermWait: time.Minute, KillWait: 300 * time.Millisecond})
 	ctx := context.Background()
 	if _, err := d.Start(ctx, core.Spec{ParticipantID: "p4", RunID: "r4", Token: "tok", Cwd: dir, HarnessRef: "sess-4"}); err != nil {
 		t.Fatal(err)
 	}
 	child, _ := waitRecord(t, d, "p4", "probe_child")
-	gc := int(child["pid"].(float64))
 	start := time.Now()
 	ex, err := d.Kill(ctx, "p4")
 	if err != nil || ex.Signal != "SIGKILL" || time.Since(start) > 5*time.Second {
-		t.Fatalf("kill = %+v, %v after %s; want SIGKILL at once", ex, err, time.Since(start))
+		t.Fatalf("kill = %+v, %v after %s; want SIGKILL after the grace", ex, err, time.Since(start))
 	}
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		if err := syscall.Kill(gc, 0); errors.Is(err, syscall.ESRCH) {
-			break
-		}
-		if time.Now().After(deadline) {
-			syscall.Kill(gc, syscall.SIGKILL)
-			t.Fatalf("grandchild %d survived kill", gc)
-		}
-	}
+	expectGone(t, child, "kill")
 }

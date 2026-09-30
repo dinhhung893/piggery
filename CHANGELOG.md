@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.2 - 2026-09-30
+
+Fix: `x` and `kill` now stop the command a worker is running, not only the worker.
+
+- `x` / `kill` left a worker's running shell command alive when the harness ran it in a process group of
+  its own (pi's bash tool does). Kill now asks first (SIGTERM, so the harness and its extensions clean
+  up), waits up to 2 seconds, then SIGKILLs the worker and everything left in its process tree; stop
+  ends the tree the same way. Something detached before the kill that no tool tracks may survive.
+
 ## v0.5.1 - 2026-09-30
 
 An emergency stop in `piggery top` (`x` kills the selected worker) and a tidier bottom of the screen.

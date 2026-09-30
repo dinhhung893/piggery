@@ -22,7 +22,7 @@ you (admin, read from `~/.piggery/admin.token`) and start the daemon if it is no
 | `tail <worker> [-n N] [-f] [--team T]` | A worker's log or a session's transcript, readable; `--json` raw |
 | `log [--after SEQ] [--team T] [--limit N]` | Decisions and lifecycle events |
 | `abort <x> [--team T]` | Cancel x's current turn; it stays alive |
-| `kill <worker> [--team T]` (short: `x`) | Kill a worker's process group now (SIGKILL); `x` on the selected worker in `top` asks `kill <name>? y/n` and does the same |
+| `kill <worker> [--team T]` (short: `x`) | Kill a worker: SIGTERM so its harness cleans up, then after up to 2s SIGKILL for it and every process left in its tree; `x` on the selected worker in `top` asks `kill <name>? y/n` and does the same |
 | `resume <worker> [--team T]` | Start a stopped worker again in its session, with its model, thinking level and harness |
 | `model <worker> [<provider/model>] [--thinking L] [--team T]` | Change a worker's model or thinking level now, or at its resume |
 | `release <msg_id>` | Deliver a message held by a limit |

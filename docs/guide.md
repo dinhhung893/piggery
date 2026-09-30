@@ -70,10 +70,14 @@ read, except `x` in `top`. In `top`, a member's current task sits under its name
 assignment from whoever it reports to, and whether it handed back.
 
 **Emergency stop.** `x` in `top` on the selected worker (it asks `kill <name>? y/n` once), or
-`piggery x <worker>`, kills it: SIGKILL of the worker's process group. `piggery resume` brings it back
-in its session and its unacked mail is delivered again, so send it a note first if it must not redo
-the work. Processes that left the group (docker, `setsid`) survive. A session you opened is not a
-headless worker: `x` says so and does nothing; stop it in its own window (Esc).
+`piggery x <worker>`, kills it. Kill asks first: SIGTERM to the worker, so its harness and extensions
+clean up (pi stops its shell commands, a background-jobs tool stops its jobs); after up to 2 seconds
+it is SIGKILL for the worker and every process still left in its tree, shell commands in a process
+group of their own included. `piggery resume` brings it back in its session and its unacked mail is
+delivered again, so send it a note first if it must not redo the work. Something already detached
+before `x` that no tool tracks (a bare `nohup … &`), and what was started outside the tree (a
+container the docker daemon runs), may survive. A session you opened is not a headless worker: `x`
+says so and does nothing; stop it in its own window (Esc).
 
 What works on which session (details in [reference.md](reference.md#harness-capabilities)):
 workers take every command above; a session you opened can be aborted on pi, omp and dsh, and its

@@ -99,8 +99,9 @@ type Options struct {
 	// (core.Engine.UnbatchedTurn).
 	OnUnbatchedTurn func(participantID, runID, event string)
 	// StopWait is how long Stop waits after closing stdin before SIGTERM (default 10s);
-	// TermWait how long after SIGTERM before SIGKILL (default 5s).
-	StopWait, TermWait time.Duration
+	// TermWait how long after SIGTERM before SIGKILL (default 5s); KillWait the same for Kill
+	// (default 2s).
+	StopWait, TermWait, KillWait time.Duration
 }
 
 // Driver runs local headless workers of one harness. Data lives under dir (~/.piggery).
@@ -157,6 +158,9 @@ func newWith(dir string, opts Options, c codec) *Driver {
 	}
 	if opts.TermWait == 0 {
 		opts.TermWait = 5 * time.Second
+	}
+	if opts.KillWait == 0 {
+		opts.KillWait = 2 * time.Second
 	}
 	return &Driver{dir: dir, opts: opts, codec: c, procs: map[string]*worker{}, kill: syscall.Kill}
 }
@@ -303,8 +307,7 @@ func (d *Driver) Start(_ context.Context, s core.Spec) (core.Proc, error) {
 
 	// After the reaper above: the kill waits on w.done.
 	if err := d.codec.started(context.Background(), w, l); err != nil {
-		d.kill(-w.pgid, syscall.SIGKILL)
-		<-w.done
+		d.terminate(w, d.opts.KillWait, nil)
 		return core.Proc{}, err
 	}
 
@@ -338,8 +341,8 @@ func workerEnv(base []string, s core.Spec, own []string) []string {
 	return append(env, own...)
 }
 
-// Stop ends the participant's worker: close stdin, wait StopWait, SIGTERM the process group,
-// wait TermWait, SIGKILL the group. Stopping an exited worker returns its recorded exit.
+// Stop ends the participant's worker: close stdin and wait StopWait, then terminate it with
+// TermWait as the grace. Stopping an exited worker returns its recorded exit.
 func (d *Driver) Stop(_ context.Context, participantID string) (core.Exit, error) {
 	d.mu.Lock()
 	w := d.procs[participantID]
@@ -351,32 +354,47 @@ func (d *Driver) Stop(_ context.Context, participantID string) (core.Exit, error
 		// Signal nothing: once the group is empty its pgid can belong to someone else.
 		return w.exit, nil
 	}
+	// The tree is read while the leader lives: its children reparent to init once it is gone.
+	tree := treeBelow(w.pgid, true, nil)
 	w.inMu.Lock()
 	w.stdin.Close()
 	w.inMu.Unlock()
-	if !w.wait(d.opts.StopWait) {
-		d.kill(-w.pgid, syscall.SIGTERM)
-		if !w.wait(d.opts.TermWait) {
-			d.kill(-w.pgid, syscall.SIGKILL)
-			<-w.done
-		}
-	}
-	// The leader was alive when Stop began and just ended; do not leave the rest of its
-	// group (tool subprocesses) behind.
-	d.kill(-w.pgid, syscall.SIGKILL)
+	w.wait(d.opts.StopWait)
+	d.terminate(w, d.opts.TermWait, tree)
 	return w.exit, nil
 }
 
-// Kill SIGKILLs the worker's process group at once (no stdin close, no grace) and returns the
-// recorded exit. The group is ours: the driver started it and has not reaped it yet.
+// Kill ends the worker without closing stdin first: terminate with KillWait as the grace. It
+// returns the recorded exit.
 func (d *Driver) Kill(_ context.Context, participantID string) (core.Exit, error) {
 	w, err := d.live(participantID)
 	if err != nil {
 		return core.Exit{}, err
 	}
-	d.kill(-w.pgid, syscall.SIGKILL)
-	<-w.done
+	d.terminate(w, d.opts.KillWait, nil)
 	return w.exit, nil
+}
+
+// terminate is ask, wait, force (as systemd and docker stop do), and the one way Stop and Kill end
+// a worker: read its tree (proctree.go; seen is an earlier read), SIGTERM the worker's own group
+// so the harness shuts its children and extensions down itself, wait up to grace (less when it
+// exits), then SIGKILL the group and whatever of the tree is still there, and its new children.
+// It returns once the worker has exited. The group is ours only while the leader is not reaped.
+func (d *Driver) terminate(w *worker, grace time.Duration, seen []proc) {
+	tree := treeBelow(w.pgid, !w.exited(), seen)
+	if !w.exited() {
+		d.kill(-w.pgid, syscall.SIGTERM)
+		w.wait(grace)
+	}
+	tree = treeBelow(w.pgid, !w.exited(), tree)
+	d.signalTree(w.pgid, !w.exited(), tree, syscall.SIGKILL)
+	<-w.done
+}
+
+// killNow SIGKILLs the worker's group and every descendant at once, for a run that has failed
+// (it cannot wait: the reaper waits for the caller).
+func (d *Driver) killNow(w *worker) {
+	d.signalTree(w.pgid, !w.exited(), treeBelow(w.pgid, !w.exited(), nil), syscall.SIGKILL)
 }
 
 // Abort asks the harness to cancel the current turn; the worker stays alive.
@@ -500,7 +518,7 @@ func (d *Driver) normalize(w *worker, r io.ReadCloser) {
 			}
 			if rec.fatal != "" {
 				f.Write(append(stdError(rec.fatal), '\n'))
-				d.kill(-w.pgid, syscall.SIGKILL)
+				d.killNow(w)
 			}
 			if rec.reply != nil {
 				w.inMu.Lock()

@@ -70,14 +70,16 @@ func sameProgram(command, recorded string) bool {
 	return len(tok) > 0 && (filepath.Base(tok[0]) == name || (len(tok) > 1 && filepath.Base(tok[1]) == name))
 }
 
-// KillVerified signals p's process group (TERM, then KILL) only while Inspect says it is still
-// ours, re-checking before each signal. A dead or reused pid is never signalled.
+// KillVerified is terminate for a worker that is not our child (after a daemon restart): SIGTERM
+// to its group, then SIGKILL to the group and its tree, only while Inspect says it is still ours,
+// re-checking before each signal. A dead or reused pid is never signalled.
 func (d *Driver) KillVerified(ctx context.Context, p core.Proc) (core.Exit, error) {
 	pgid := p.PGID
 	if pgid <= 0 {
 		pgid = p.PID
 	}
 	sent := ""
+	var tree []proc
 	for _, step := range []struct {
 		sig  syscall.Signal
 		wait time.Duration
@@ -89,11 +91,18 @@ func (d *Driver) KillVerified(ctx context.Context, p core.Proc) (core.Exit, erro
 		if st != core.ProcOurs {
 			return core.Exit{Code: -1, Signal: sent, At: time.Now().UnixMilli()}, nil
 		}
-		d.kill(-pgid, step.sig)
+		tree = treeBelow(p.PID, true, tree)
+		if step.sig == syscall.SIGTERM {
+			d.kill(-pgid, step.sig)
+		} else {
+			d.signalTree(pgid, true, tree, step.sig)
+		}
 		sent = signalName(step.sig)
 		// Not our child after a daemon restart: no wait status, so poll until it is gone.
 		for deadline := time.Now().Add(step.wait); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 			if st, err := d.Inspect(ctx, p); err == nil && st != core.ProcOurs {
+				// The leader is gone: kill what it left of the tree.
+				d.signalTree(pgid, false, treeBelow(p.PID, false, tree), syscall.SIGKILL)
 				return core.Exit{Code: -1, Signal: sent, At: time.Now().UnixMilli()}, nil
 			}
 		}
