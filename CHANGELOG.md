@@ -28,6 +28,8 @@ After upgrading, reload the Paseo app if you use its plugin (its integration is 
   start folded; `e` opens them and top remembers it.
 - Paseo plugin, like top: Events fold (folded by default), event times, a folded team shows its
   counts, and folds are remembered on the Paseo host.
+- `prompts` in config.yaml takes `*` (every role, every template, and solo sessions) and
+  `<template>/*` (every role of that template); a file several entries name is added once.
 - `team up` warns when a role pins `spawn.model` or `spawn.thinking` but leaves `harness: inherit`:
   a model name belongs to one harness.
 - Fix: a Claude Code or Codex worker's piggery tool call made while the daemon restarts waits up to

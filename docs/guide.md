@@ -207,7 +207,8 @@ prompts:
 ```
 
 A role is `<role>` (in every template), `<template>/<role>` (that template only; the template is the
-`template:` line of its manifest) or `solo`. The text goes right after the role's own instructions,
+`template:` line of its manifest) or `solo`; `<template>/*` is every role of that template and `*` is
+every role of every template, solo included (a file several entries name is added once). The text goes right after the role's own instructions,
 under a heading naming the file. Files are read when a session starts, so edits need no restart, but
 a session already running keeps its card. The list itself needs a restart.
 

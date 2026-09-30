@@ -15,7 +15,8 @@ import (
 // A shared prompt is a text file of the Human's (code rules, how to organise a project) that goes
 // into the role card of every role it names, in every template and harness: config.yaml `prompts`.
 // A role is `<role>` (that role in every template), `<template>/<role>` (the manifest's `template:`
-// names the template, as `template new` sets it), or `solo` (solo sessions).
+// names the template, as `template new` sets it), `solo` (solo sessions), `<template>/*` (every
+// role of that template) or `*` (every role of every template, and solo sessions).
 type PromptEntry struct {
 	File  string   `yaml:"file"`
 	Roles []string `yaml:"roles"`
@@ -39,11 +40,16 @@ func promptPath(dir, file string) string {
 func promptsFor(dir string, entries []PromptEntry, warn func(msg string)) func(template, role string) string {
 	return func(template, role string) string {
 		var b strings.Builder
+		seen := map[string]bool{} // a file several entries name is added once, at its first entry
 		for _, e := range entries {
-			if !slices.ContainsFunc(e.Roles, func(r string) bool { return r == role || (template != "" && r == template+"/"+role) }) {
+			path := promptPath(dir, e.File)
+			if seen[path] || !slices.ContainsFunc(e.Roles, func(r string) bool {
+				return r == "*" || r == role || (template != "" && (r == template+"/"+role || r == template+"/*"))
+			}) {
 				continue
 			}
-			text, err := os.ReadFile(promptPath(dir, e.File))
+			seen[path] = true
+			text, err := os.ReadFile(path)
 			if err != nil {
 				warn(fmt.Sprintf("shared prompt %s left out of the card of %s/%s: %v", e.File, template, role, err))
 				continue
@@ -67,8 +73,9 @@ func checkPromptShape(path string, entries []PromptEntry) (kept []PromptEntry, w
 		var roles []string
 		for _, r := range e.Roles {
 			tpl, role, two := strings.Cut(r, "/")
-			if r == "" || strings.Contains(role, "/") || (two && (tpl == "" || role == "")) {
-				warns = append(warns, fmt.Sprintf("%s (%s): role %q: want <role> or <template>/<role>; role skipped", at, e.File, r))
+			glob := strings.Contains(r, "*") && r != "*" && !(two && role == "*" && !strings.Contains(tpl, "*")) // only `*` and `<template>/*`
+			if r == "" || glob || strings.Contains(role, "/") || (two && (tpl == "" || role == "")) {
+				warns = append(warns, fmt.Sprintf("%s (%s): role %q: want <role>, <template>/<role>, <template>/*, * or solo; role skipped", at, e.File, r))
 				continue
 			}
 			roles = append(roles, r)
@@ -120,13 +127,13 @@ func CheckPrompts(dir string, entries []PromptEntry) (kept []PromptEntry, warns 
 func roleProblem(roles map[string][]string, r string) string {
 	tpl, role, two := strings.Cut(r, "/")
 	switch {
-	case r == soloRole:
+	case r == soloRole, r == "*":
 	case two:
 		rs, ok := roles[tpl]
 		if !ok {
 			return fmt.Sprintf("no template has template: %s (piggery templates lists them; <template> is the manifest's template:)", tpl)
 		}
-		if !slices.Contains(rs, role) {
+		if role != "*" && !slices.Contains(rs, role) {
 			return fmt.Sprintf("template %s has no role %q (roles: %s)", tpl, role, strings.Join(rs, ", "))
 		}
 	default:

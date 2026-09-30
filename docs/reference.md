@@ -60,7 +60,7 @@ Environment: `PIGGERY_DISABLED=1` makes an adapter inert (a session that must no
 | `gc.archive_keep` | `30d` | Delete gc archives older than this, or `off`; also for a manual gc |
 | `display.columns` | `[role, state, harness, model, ctx, turns, unacked, age, since, cwd]` | Columns `top` and `ps` show after the name, in order (`top` has no `unacked` column: its header, team lines and details give it); **live**, read on every run. An unknown name warns and shows the defaults; `-` where a row has no value, `model` is the id without its provider, `cwd` is blank in the project directory itself |
 | `spawn.allowed_roots` | `[]` | Absolute directories outside a team's root where a worker may be placed with a `cwd` (the root and its repo's git worktrees always may) |
-| `prompts` | `[]` | Your files by role: a list of `{file, roles}`; `file` is relative to `~/.piggery` or absolute; `roles` are `<role>`, `<template>/<role>` or `solo`. The list needs a restart; a file is read at each session start. A bad entry is skipped with a line in `serve.log` |
+| `prompts` | `[]` | Your files by role: a list of `{file, roles}`; `file` is relative to `~/.piggery` or absolute; `roles` are `<role>`, `<template>/<role>`, `<template>/*` (every role of that template), `*` (every role of every template, and solo) or `solo`; a file several entries name is added once. The list needs a restart; a file is read at each session start. A bad entry is skipped with a line in `serve.log` |
 
 ## harness/<harness>.json
 

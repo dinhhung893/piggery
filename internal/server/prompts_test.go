@@ -21,13 +21,17 @@ func writeFile(t *testing.T, path, text string) {
 }
 
 // A role gets the files whose entries name it (`<role>` in any template, `<template>/<role>` in
-// that one only, `solo` for solo sessions), in config order, each under a heading naming the file;
+// that one only, `<template>/*` every role of that template, `*` every role and solo, `solo` for
+// solo sessions), in config order, each under a heading naming the file, a file several matching
+// entries name only once;
 // the file is read at each call, so an edit shows in the next card; a file that is gone is warned
 // about and left out of the card, which is still built.
 func TestSharedPromptsForARole(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "rules", "code.md"), "code rules\n")
 	writeFile(t, filepath.Join(dir, "deleg.md"), "delegate\n")
+	writeFile(t, filepath.Join(dir, "all.md"), "everyone\n")
+	writeFile(t, filepath.Join(dir, "se.md"), "se only\n")
 	abs := filepath.Join(t.TempDir(), "abs.md")
 	writeFile(t, abs, "absolute")
 	var warned []string
@@ -35,6 +39,9 @@ func TestSharedPromptsForARole(t *testing.T) {
 		{File: "rules/code.md", Roles: []string{"executor", "solo"}},
 		{File: "deleg.md", Roles: []string{"se/supervisor", "solo"}},
 		{File: abs, Roles: []string{"executor"}},
+		{File: "all.md", Roles: []string{"*"}},
+		{File: "se.md", Roles: []string{"se/*", "executor"}},
+		{File: "all.md", Roles: []string{"executor"}}, // the same file again: no second copy
 	}, func(m string) { warned = append(warned, m) })
 	got := func(template, role string) string { return f(template, role) }
 	if s := got("se", "executor"); !strings.Contains(s, "## Shared prompt from rules/code.md\ncode rules\n") || !strings.Contains(s, "absolute") ||
@@ -44,11 +51,23 @@ func TestSharedPromptsForARole(t *testing.T) {
 	if s := got("se", "supervisor"); !strings.Contains(s, "delegate") || strings.Contains(s, "code rules") {
 		t.Fatalf("se/supervisor: %q", s)
 	}
-	if s := got("other", "supervisor"); s != "" {
+	if s := got("other", "supervisor"); strings.Contains(s, "delegate") {
 		t.Fatalf("<template>/<role> leaked to another template: %q", s)
 	}
 	if s := got("", "solo"); !strings.Contains(s, "code rules") || !strings.Contains(s, "delegate") {
 		t.Fatalf("solo: %q", s)
+	}
+	if s := got("se", "supervisor"); !strings.Contains(s, "everyone") || !strings.Contains(s, "se only") {
+		t.Fatalf("se/supervisor: %q; want * and se/*", s)
+	}
+	if s := got("se", "executor"); strings.Count(s, "everyone") != 1 || strings.Count(s, "se only") != 1 {
+		t.Fatalf("se/executor: %q; want each wildcard file once", s)
+	}
+	if s := got("other", "supervisor"); !strings.Contains(s, "everyone") || strings.Contains(s, "se only") {
+		t.Fatalf("other/supervisor: %q; want * but not se/*", s)
+	}
+	if s := got("", "solo"); !strings.Contains(s, "everyone") || strings.Contains(s, "se only") {
+		t.Fatalf("solo: %q; want * but not se/*", s)
 	}
 	writeFile(t, filepath.Join(dir, "rules", "code.md"), "edited rules")
 	if s := got("se", "executor"); !strings.Contains(s, "edited rules") {
@@ -76,28 +95,29 @@ prompts:
   - {file: rules.md}
   - {roles: [solo]}
   - {file: rules.md, roles: [solo, p2p/peer]}
+  - {file: rules.md, roles: ["*", "p2p/*", "exec*", "*/peer"]}
 `)
 	set, err := LoadSettings(dir)
-	if err != nil || set.Harness != "pi" || len(set.Warnings) != 3 {
-		t.Fatalf("settings %+v, %v; want the daemon's settings with 3 shape warnings", set, err)
+	if err != nil || set.Harness != "pi" || len(set.Warnings) != 5 {
+		t.Fatalf("settings %+v, %v; want the daemon's settings with 5 shape warnings (a glob is only * or <template>/*)", set, err)
 	}
-	for i, want := range []string{"prompts[0]", "prompts[1]", "prompts[2]"} {
+	for i, want := range []string{"prompts[0]", "prompts[1]", "prompts[2]", `"exec*"`, `"*/peer"`} {
 		if !strings.Contains(set.Warnings[i], want) {
 			t.Errorf("warning %d = %q; want it to name %s", i, set.Warnings[i], want)
 		}
 	}
-	if len(set.Prompts) != 2 || !slices.Equal(set.Prompts[0].Roles, []string{"solo"}) {
+	if len(set.Prompts) != 3 || !slices.Equal(set.Prompts[0].Roles, []string{"solo"}) || !slices.Equal(set.Prompts[2].Roles, []string{"*", "p2p/*"}) {
 		t.Fatalf("kept %+v; want the good entry and the good role of the first", set.Prompts)
 	}
 	kept, warns := CheckPrompts(dir, []PromptEntry{
 		{File: "rules.md", Roles: []string{"solo", "p2p/peer", "supervisor"}},
 		{File: "nope.md", Roles: []string{"solo"}},
-		{File: "rules.md", Roles: []string{"solo", "nosuch/peer", "p2p/supervisor", "executr"}},
+		{File: "rules.md", Roles: []string{"solo", "nosuch/peer", "p2p/supervisor", "executr", "*", "p2p/*", "nosuch/*"}},
 	})
-	if len(kept) != 2 || len(kept[0].Roles) != 3 || !slices.Equal(kept[1].Roles, []string{"solo"}) || len(warns) != 4 {
+	if len(kept) != 2 || len(kept[0].Roles) != 3 || !slices.Equal(kept[1].Roles, []string{"solo", "*", "p2p/*"}) || len(warns) != 5 {
 		t.Fatalf("kept %+v, warnings %q", kept, warns)
 	}
-	for i, want := range []string{"prompts[1]", "nosuch", "p2p/supervisor", "executr"} {
+	for i, want := range []string{"prompts[1]", "nosuch", "p2p/supervisor", "executr", "nosuch/*"} {
 		if !strings.Contains(warns[i], want) {
 			t.Errorf("warning %d = %q; want it to name %s", i, warns[i], want)
 		}
