@@ -7,7 +7,7 @@ import { RADIUS, SEGMENT, SPACING, text } from "./theme.ts";
  * :167-230): segments side by side, the chosen one filled. The SDK theme has no surface3, so the
  * chosen and pressed segment take surface2 and a hovered one surface1.
  */
-export function TabBar<T extends string>({ theme, tabs, active, onPick }: { theme: PluginTheme; tabs: { id: T; label: string }[]; active: T; onPick: (id: T) => void }) {
+export function TabBar<T extends string>({ theme, tabs, active, onPick }: { theme: PluginTheme; tabs: { id: T; label: string; count?: number }[]; active: T; onPick: (id: T) => void }) {
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: SPACING[1], minHeight: SEGMENT.height }}>
       {tabs.map((tab) => {
@@ -24,7 +24,10 @@ export function TabBar<T extends string>({ theme, tabs, active, onPick }: { them
         };
         return (
           <Pressable key={tab.id} accessibilityRole="tab" accessibilityState={{ selected: on }} onPress={() => onPick(tab.id)} style={style}>
-            <Text style={text(theme, "meta", on ? "foreground" : "foregroundMuted")}>{tab.label}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: SPACING[1.5] }}>
+              <Text style={text(theme, "meta", on ? "foreground" : "foregroundMuted")}>{tab.label}</Text>
+              {tab.count === undefined ? null : <Text style={[text(theme, "label"), { fontVariant: ["tabular-nums"] }]}>{tab.count}</Text>}
+            </View>
           </Pressable>
         );
       })}

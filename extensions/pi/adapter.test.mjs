@@ -62,6 +62,7 @@ test("mail text: steered while running; an idle wake starts a new turn that keep
 	await turns.wake(); // running: into this turn
 	await turns.drain();
 	assert.deepEqual(calls.map((c) => c.prompt_id), ["k1", "k1", "k1"]);
+	assert.equal(calls[0].wake, true); // a mail check, not a turn: the daemon opens one only with mail
 	assert.deepEqual(calls.at(-1), { event: "tool_boundary", prompt_id: "k1" });
 	assert.deepEqual(shown.slice(1), [
 		{ text: "mail for turn_start", steer: true },
@@ -79,19 +80,18 @@ test("a wake after the turn ended but before pi settled opens the next turn afte
 	await turns.drain();
 	assert.deepEqual(calls.slice(2), [
 		{ presence: "agent_settled" },
-		{ event: "turn_start", prompt_id: "k2" },
-		{ event: "turn_end", prompt_id: "k2", outcome: "interrupted" },
+		{ event: "turn_start", prompt_id: "k2", wake: true },
 	]);
 });
 
-test("an idle wake with no mail left ends its turn unacked", async () => {
+test("an idle wake with no mail left (a reconnect, mail read elsewhere) opens no turn, so ends none", async () => {
 	const { turns, calls, shown } = setup();
 	await turns.wake();
-	assert.deepEqual(calls, [
-		{ event: "turn_start", prompt_id: "k1" },
-		{ event: "turn_end", prompt_id: "k1", outcome: "interrupted" },
-	]);
+	assert.deepEqual(calls, [{ event: "turn_start", prompt_id: "k1", wake: true }]);
 	assert.equal(shown.length, 0);
+	turns.agentStart(); // the next turn is a new one, under a new key
+	await turns.drain();
+	assert.equal(calls.at(-1).prompt_id, "k2");
 });
 
 test("a blocked end steers the mail and the turn goes on; an end the daemon missed waits for identify", async () => {

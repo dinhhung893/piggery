@@ -3,10 +3,10 @@ package cli
 import (
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/sting8k/piggery/internal/core"
 	"github.com/sting8k/piggery/internal/proto"
+	"github.com/sting8k/piggery/internal/view"
 )
 
 // Admin quick actions on one participant: target by name or id, --team T when the
@@ -79,7 +79,7 @@ func (e *env) model(args []string) error {
 	if len(pos) == 2 {
 		a.Model = pos[1]
 	}
-	what := modelLabel(a.Model, a.Thinking)
+	what := view.ModelLabel(a.Model, a.Thinking)
 	return do(e, proto.VerbModel, a, func(w io.Writer, r core.ModelResult) {
 		if r.Live {
 			fmt.Fprintf(w, "%s now runs %s (from its next turn)\n", a.Target, what)
@@ -87,29 +87,4 @@ func (e *env) model(args []string) error {
 			fmt.Fprintf(w, "%s will run %s when resumed\n", a.Target, what)
 		}
 	})
-}
-
-// modelLabel is a model with its thinking level: "HP/x · high", "HP/x", "thinking high", "-".
-// modelID is a model without its provider (what comes before the first "/"; the id itself may
-// hold "/": CPAv2/devin/swe-2 is devin/swe-2), for the model column; "-" unknown.
-func modelID(model string) string {
-	if model == "" {
-		return "-"
-	}
-	if _, id, ok := strings.Cut(model, "/"); ok {
-		return id
-	}
-	return model
-}
-
-func modelLabel(model, thinking string) string {
-	switch {
-	case model != "" && thinking != "":
-		return model + " · " + thinking
-	case thinking != "":
-		return "thinking " + thinking
-	case model != "":
-		return model
-	}
-	return "-"
 }

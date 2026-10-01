@@ -31,6 +31,7 @@ type fakeRuntime struct {
 	woken      []string // Wake calls
 	models     []string // SetModel calls, "id=model"
 	modelErr   error    // SetModel result
+	modelList  []string // Models result; non-nil: the driver declares CapListModels
 	thinkErr   error    // SetThinking result (its calls go to models as "id~level")
 	killErr    error    // Kill result (nil: exit -1 SIGKILL)
 
@@ -58,8 +59,13 @@ func (f *fakeRuntime) Capabilities() []string {
 	if f.delivers {
 		caps = append(caps, core.CapDeliver)
 	}
+	if f.modelList != nil {
+		caps = append(caps, core.CapListModels)
+	}
 	return caps
 }
+
+func (f *fakeRuntime) Models(context.Context, string) ([]string, error) { return f.modelList, nil }
 
 func (f *fakeRuntime) deliveredCopy() []core.Delivery {
 	f.deliverMu.Lock()
@@ -807,6 +813,40 @@ func TestAdminSetModel(t *testing.T) {
 	f.e.Agent(ctx, f.lead, core.AgentArgs{Action: core.AgentResume, Target: "w1"})
 	if s := f.rt.starts[3]; s.Model != "HP/b" || s.Thinking != "high" {
 		t.Fatalf("resume ran %q/%q; want HP/b kept and high", s.Model, s.Thinking)
+	}
+}
+
+// The model list is the driver's, passed through; it is refused for a session, for a worker whose
+// harness declared no list at spawn, and for a worker that is no longer running.
+func TestAdminModelsList(t *testing.T) {
+	f := newAgentFixture(t)
+	models := func(who string) ([]string, error) {
+		r, err := f.e.Models(ctx, core.AdminTarget{Target: who})
+		return r.Models, err
+	}
+	spawn := func(name string) {
+		t.Helper()
+		if _, err := f.e.Agent(ctx, f.lead, core.AgentArgs{Action: core.AgentSpawn, Role: "worker", Name: name, Task: "t"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spawn("w1") // no list_models declared
+	if _, err := models("w1"); code(err) != core.CodeInvalid || !strings.Contains(err.Error(), "cannot list") {
+		t.Fatalf("worker without the capability: %v; want invalid", err)
+	}
+	f.rt.modelList = []string{"p/a", "p/b"}
+	spawn("w2")
+	if got, err := models("w2"); err != nil || !eq(got, []string{"p/a", "p/b"}) {
+		t.Fatalf("models = %v, %v", got, err)
+	}
+	if _, err := models("lead"); code(err) != core.CodeInvalid {
+		t.Fatalf("models of a session: %v; want invalid", err)
+	}
+	if _, err := f.e.Agent(ctx, f.lead, core.AgentArgs{Action: core.AgentStop, Target: "w2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := models("w2"); code(err) != core.CodeInvalid || !strings.Contains(err.Error(), "not running") {
+		t.Fatalf("models of a stopped worker: %v; want not running", err)
 	}
 }
 

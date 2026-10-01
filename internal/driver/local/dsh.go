@@ -245,6 +245,27 @@ func (c *dshCodec) setModel(ctx context.Context, w *worker, model string) error 
 	return c.command(ctx, w, "set_model", map[string]any{"model": model})
 }
 
+// models asks the plugin (piggery/models) for what dsh's llm service lists, as provider/model.
+func (c *dshCodec) models(ctx context.Context, w *worker) ([]string, error) {
+	id := nextRequestID()
+	line, err := w.request(ctx, commandTimeout, id, "models", map[string]any{"jsonrpc": "2.0", "method": "piggery/models", "params": map[string]any{"id": id}})
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Params struct {
+			OK     bool     `json:"ok"`
+			Error  string   `json:"error"`
+			Models []string `json:"models"`
+		} `json:"params"`
+	}
+	json.Unmarshal(line, &r)
+	if !r.Params.OK {
+		return nil, fmt.Errorf("dsh refused models: %s", r.Params.Error)
+	}
+	return append([]string{}, r.Params.Models...), nil
+}
+
 func (c *dshCodec) setThinking(ctx context.Context, w *worker, level string) error {
 	return c.command(ctx, w, "thinking", map[string]any{"thinking": level})
 }

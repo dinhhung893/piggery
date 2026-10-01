@@ -4,8 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"image/color"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -18,6 +16,7 @@ import (
 	"github.com/sting8k/piggery/internal/core"
 	"github.com/sting8k/piggery/internal/proto"
 	"github.com/sting8k/piggery/internal/server"
+	"github.com/sting8k/piggery/internal/view"
 )
 
 // The look of top: gh-dash's master-detail
@@ -30,6 +29,7 @@ import (
 // terminal's own foreground.
 var (
 	colPrimary, colSuccess, colMuted, colWarning, colError, colSubtle, colSurface, colTool color.Color
+	colLink                                                                                color.Color // blue: what a click acts on (the model value that opens the picker)
 	colInk                                                                                 color.Color // text on a coloured pill
 	colOnMain                                                                              color.Color // text on the primary pill
 
@@ -44,6 +44,7 @@ func init() { usePalette(true) }
 func usePalette(dark bool) {
 	c := lipgloss.LightDark(dark)
 	colPrimary = charmtone.Charple
+	colLink = c(charmtone.Damson, charmtone.Malibu)
 	colSuccess = c(lipgloss.Color("#0CB37F"), charmtone.Guac) // fang's flag green
 	colMuted = charmtone.Squid
 	colWarning = c(charmtone.Tang, charmtone.Mustard) // Mustard is unreadable on a light background
@@ -64,37 +65,27 @@ func helpStyles() help.Styles {
 		FullKey: stMuted, FullDesc: stRule, FullSeparator: stRule}
 }
 
-// stateIcon is a member state as icon + word, coloured by what it asks of the operator.
-func stateIcon(state string) (string, color.Color) {
-	switch state {
-	case "working":
-		return "● working", colSuccess
-	case "idle":
-		return "○ idle", colMuted
-	case "requested":
-		return "◌ queued", colWarning // the state is `requested`; top says what it is for a person
-	case "starting":
-		return "◌ starting", colWarning
-	case "awaiting_permission":
-		return "◐ waiting", colWarning
-	case "parked":
-		return "⏸ parked", colWarning
-	case "gone":
-		return "✗ gone", colError
-	}
-	return state, colMuted
-}
+// stateIcon is a member state as icon + word (view.StateText), coloured by what it asks of the operator.
+func stateIcon(state string) (string, color.Color) { return view.StateText(state), stateColor(state) }
 
-// allStates are the states a participant can be in, for the width of the STATE column (which sizes
-// to the widest word stateIcon shows for them, `requested` being shown as `queued`).
-var allStates = []string{"requested", "starting", "working", "idle", "awaiting_permission", "parked", "gone"}
+func stateColor(state string) color.Color {
+	switch view.StatusOf(state) {
+	case view.StatusWorking:
+		return colSuccess
+	case view.StatusWaiting:
+		return colWarning
+	case view.StatusGone:
+		return colError
+	}
+	return colMuted
+}
 
 // gateTag follows the name of a team's gate member in its NAME cell, drawn muted by row(); the
 // cell's width includes it, so nothing moves.
 const gateTag = " (gate)"
 
-func gateTagOf(m core.MemberState) string {
-	if m.Gate {
+func gateTagOf(gate bool) string {
+	if gate {
 		return gateTag
 	}
 	return ""
@@ -109,11 +100,6 @@ const (
 	soloLead = soloSlot + soloPill + " "
 )
 
-// dirLabel is a directory line's text: a path, so it ends in "/".
-func dirLabel(p string) string {
-	return strings.TrimSuffix(p, "/") + "/"
-}
-
 func pill(text string, bg, fg color.Color) string {
 	return lipgloss.NewStyle().Background(bg).Foreground(fg).Padding(0, 1).Render(text)
 }
@@ -121,30 +107,6 @@ func pill(text string, bg, fg color.Color) string {
 // topColumns are the columns top's table can show: every configurable one but unacked, which top
 // gives in its header, the team lines and a member's details; ps text keeps its unacked= field.
 var topColumns = slices.DeleteFunc(slices.Clone(server.DisplayColumns), func(c string) bool { return c == "unacked" })
-
-// anyCwd reports whether any member or solo of the snapshot, folded, gone or closed ones included and
-// whatever the tab, works outside its group's directory: the rows CWD would show something for.
-func (m *topModel) anyCwd() bool {
-	var roots []string
-	for _, t := range teamsOf(m.ps) {
-		roots = append(roots, t.Root)
-	}
-	for _, g := range groupByDir(m.ps.Teams, m.ps.Closed, m.ps.Solos, roots) {
-		for _, u := range g.units {
-			if u.solo != nil && relCwd(g.dir, u.solo.Cwd) != "" {
-				return true
-			}
-			if u.team != nil {
-				for _, mem := range u.team.Members {
-					if relCwd(g.dir, mem.Cwd) != "" {
-						return true
-					}
-				}
-			}
-		}
-	}
-	return false
-}
 
 // When the list is narrow: CWD and MODEL shrink, then ROLE, MODEL, TURNS and AGE go, then NAME
 // shrinks.
@@ -324,7 +286,7 @@ func (m *topModel) render() string {
 	for _, l := range m.keyLines(width - 2) {
 		foot = append(foot, " "+l)
 	}
-	notes, mismatch := versionNotes(m.ps.Version, Version)
+	notes, mismatch := view.VersionNotes(m.ps.Version, Version)
 	foot[len(foot)-1] = withVersion(foot[len(foot)-1], notes, mismatch, width)
 
 	room := max(height-len(head)-len(foot), 6)
@@ -343,7 +305,11 @@ func (m *topModel) render() string {
 	default: // narrow: the sidebar instead of the list, until esc
 		main = m.sideBox(0, y, width, room, now)
 	}
-	return strings.Join(append(append(head, main...), foot...), "\n")
+	frame := append(append(head, main...), foot...)
+	if m.pick != nil {
+		frame = m.overlay(frame, width)
+	}
+	return strings.Join(frame, "\n")
 }
 
 // hit is a clickable span of one screen row, recorded while drawing: a tab (tab), a row of
@@ -353,6 +319,8 @@ type hit struct {
 	tab, id   string
 	side      int
 	list      bool
+	pick      string // the Overview's model row of this worker: hover tints it, a click opens the picker
+	opt       string // a choice inside the open picker (m:<row>, l:<level>)
 }
 
 func (m *topModel) at(x, y int) (hit, bool) {
@@ -414,36 +382,25 @@ func (m *topModel) sideBox(x, y, w, h int, now time.Time) []string {
 	ox := x + 3 // after "┌─ "
 	m.hits = append(m.hits, hit{y: y, x0: ox, x1: ox + len("Overview"), side: sideOverview},
 		hit{y: y, x0: ox + len("Overview  "), x1: ox + len("Overview  Tail"), side: sideTail})
-	return box(m.sideTitle(), m.sidebar(w-2, h-2, now), w, h)
+	lines := m.sidebar(w-2, h-2, now)
+	if m.modelRow >= 0 && m.sideShown() { // the model value, after "│ " and the label
+		vx := x + 1 + 1 + overviewLabel
+		m.hits = append(m.hits, hit{y: y + 1 + m.modelRow, x0: vx, x1: vx + m.modelW, side: -1, pick: m.modelOf})
+	}
+	return box(m.sideTitle(), lines, w, h)
 }
 
 // header is the title pill and the daemon's status: counts muted, held and unacked as pills
 // (amber when mail is held).
 func (m *topModel) header(now time.Time) string {
-	working, idle := 0, 0
-	count := func(state string) {
-		switch state {
-		case "working":
-			working++
-		case "idle":
-			idle++
-		}
-	}
-	for _, t := range m.ps.Teams {
-		for _, mem := range t.Members {
-			count(mem.State)
-		}
-	}
-	for _, s := range m.ps.Solos {
-		count(s.State)
-	}
+	working, idle := view.Activity(m.ps.State)
 	held := pill(fmt.Sprintf("held %d", m.ps.Held), colSurface, colMuted)
 	if m.ps.Held > 0 {
 		held = pill(fmt.Sprintf("held %d", m.ps.Held), colWarning, colInk)
 	}
 	head := " " + lipgloss.NewStyle().Bold(true).Render(pill("🐷 piggery", colPrimary, colOnMain)) + " " +
-		pill("● daemon "+ago(m.ps.StartedAt, now), colSurface, colSuccess) + " " +
-		stMuted.Render(fmt.Sprintf(" %s · %d working · %d idle ", plural(len(m.ps.Teams), "team"), working, idle)) +
+		pill("● daemon "+view.Ago(m.ps.StartedAt, now), colSurface, colSuccess) + " " +
+		stMuted.Render(fmt.Sprintf(" %s · %d working · %d idle ", view.Plural(len(m.ps.Teams), "team"), working, idle)) +
 		held + " " + pill(fmt.Sprintf("unacked %d", m.ps.Unacked), colSurface, colMuted)
 	if n := proto.Notice(m.ps.Outdated); n != "" { // an install only `piggery setup --outdated` brings up to date
 		head += " " + pill(n, colWarning, colInk)
@@ -451,15 +408,15 @@ func (m *topModel) header(now time.Time) string {
 	return head
 }
 
-func (m *topModel) tabBar(tabs []topTab, y int) string {
+func (m *topModel) tabBar(tabs []view.Tab, y int) string {
 	var parts []string
 	x := 2
 	for _, t := range tabs {
-		label := fmt.Sprintf("%s %d", t.label, t.count)
+		label := fmt.Sprintf("%s %d", t.Label, t.Count)
 		w := lipgloss.Width(label)
-		m.hits = append(m.hits, hit{y: y, x0: x, x1: x + w, tab: t.key, side: -1})
+		m.hits = append(m.hits, hit{y: y, x0: x, x1: x + w, tab: t.Key, side: -1})
 		x += w + 3
-		if t.key == m.tab {
+		if t.Key == m.tab {
 			parts = append(parts, stTitle.Underline(true).Render(label))
 		} else {
 			parts = append(parts, stMuted.Render(label))
@@ -468,12 +425,12 @@ func (m *topModel) tabBar(tabs []topTab, y int) string {
 	return "  " + strings.Join(parts, "   ")
 }
 
-// list is the column header ("" when there are no rows) and the current tab's lines, by project directory (groupByDir): the directory, then its
-// units oldest first (a team's title and its members' tree; a closed team's line, its members
-// when expanded; a solo's row), all rows in one table with the same columns. Per line, the id of
-// the member, solo or closed team on it ("" for other lines).
+// list is the column header ("" when there are no rows) and the current tab's lines, by project
+// directory (view.BuildList): the directory, then its units oldest first (a team's title and its
+// members' tree; a closed team's line, its members when expanded; a solo's row), all rows in one
+// table with the same columns. Per line, the id of the member, solo or closed team on it ("" for
+// other lines).
 func (m *topModel) list(width int, now time.Time) (string, []string, []string) {
-	stats := m.stats()
 	var lines, ids []string
 	// line appends l, for id when it is a selectable row.
 	line := func(l, id string) {
@@ -481,25 +438,13 @@ func (m *topModel) list(width int, now time.Time) (string, []string, []string) {
 	}
 	muted := func(s string) string { return "  " + stMuted.Render(s) }
 
+	l := m.listOf(m.stats(), now)
 	kinds := topColumns
-	if !m.anyCwd() { // CWD only when some row has one to show, decided from every row so a fold or a state never toggles it
+	if !l.AnyCwd { // CWD only when some row has one to show, decided from every row so a fold or a state never toggles it
 		kinds = slices.DeleteFunc(slices.Clone(topColumns), func(c string) bool { return c == "cwd" })
 	}
 	cols := shown(m.cols, kinds)
 	head, right, fit := layout(cols, listFit)
-	cellsOf := func(val map[string]string) []string {
-		out := make([]string, len(cols))
-		for c, name := range cols {
-			out[c] = cmp.Or(val[name], "-")
-		}
-		return out
-	}
-	groups := m.groups()
-	dirs := make([]string, len(groups))
-	for i, g := range groups {
-		dirs[i] = g.dir
-	}
-	short := shortPaths(dirs)
 
 	// The rows first (their widths are shared by the whole table), then the lines in order.
 	type entry struct {
@@ -513,101 +458,37 @@ func (m *topModel) list(width int, now time.Time) (string, []string, []string) {
 		entries = append(entries, entry{row: &r})
 		all = append(all, r.cells)
 	}
-	// usage is id's ctx and turns as cells, "-" when no log of it was read.
-	usage := func(id string) (ctx, turns string) {
-		ctx, turns = "-", "-"
-		if ws, ok := stats[id]; ok {
-			if ws.hasCtx {
-				ctx = tokens(ws.ctx)
-			}
-			turns = fmt.Sprint(ws.turns)
-		}
-		return ctx, turns
-	}
-	memberRow := func(g dirGroup, tr treeRow, closed bool) trow {
-		mem := tr.m
-		state, _ := stateIcon(mem.State)
-		ctx, turns := usage(mem.ID)
-		cwd := relCwd(g.dir, mem.Cwd)
-		return trow{id: mem.ID, state: mem.State, dim: closed || mem.State == "gone" || tr.parentGone, cells: cellsOf(map[string]string{
-			"name": memberIndent + tr.prefix + mem.Name + gateTagOf(mem), "role": mem.Role, "state": state, "harness": harnessLabel(mem.Harness, mem.Headless),
-			"model": modelID(mem.Model), "ctx": ctx, "turns": turns, "unacked": fmt.Sprint(mem.Unacked),
-			"age": ago(mem.CreatedAt, now), "since": ago(mem.StateSince, now), "cwd": cmp.Or(cwd, " ")})}
-	}
-	member := func(g dirGroup, tr treeRow, closed bool) { addRow(memberRow(g, tr, closed)) }
 	// Opening or closing a fold never moves a column: the widths come from every member of every
 	// team, the ones a fold hides included.
 	var hidden [][]string
-	sizeOf := func(g dirGroup, t *core.TeamState) {
-		for _, tr := range memberTree(t.Members) {
-			hidden = append(hidden, memberRow(g, tr, false).cells)
-		}
-		if _, gone := foldGone(t.Members); len(gone) > 0 && !dead(*t) {
-			hidden = append(hidden, goneMembersRow(teamView{gone: gone}, t.ID, cols, now).cells)
-		}
-	}
-	for gi, g := range groups {
-		if gi > 0 {
+	for di, d := range l.Dirs {
+		if di > 0 {
 			entries = append(entries, entry{text: " "})
 		}
-		entries = append(entries, entry{text: "  " + stMuted.Render(dirLabel(short[gi]))}) // under the NAME header
-		for _, u := range g.units {
-			switch {
-			case u.solo != nil:
-				s := u.solo
-				state, _ := stateIcon(s.State)
-				ctx, turns := usage(s.ID)
-				addRow(trow{id: s.ID, state: s.State, cells: cellsOf(map[string]string{
-					"name": soloLead + s.Name, "state": state, "harness": harnessLabel(s.Harness, false),
-					"model": modelID(s.Model), "ctx": ctx, "turns": turns, "unacked": fmt.Sprint(s.Unacked), "age": ago(s.CreatedAt, now),
-					"since": ago(s.StateSince, now), "cwd": cmp.Or(relCwd(g.dir, s.Cwd), " ")})})
-			case m.oneLine(u):
-				t := u.team
-				sizeOf(g, t)
-				mark := "▸ "
-				if m.teamOpen(t.ID, false) {
-					mark = "▾ "
-				}
-				at, word := u.active(), ""
-				if c := u.closed; c != nil {
-					at, word = c.ClosedAt, "closed"
-				}
-				addRow(oneLineTeamRow(t.ID, t.Name, mark, word, at, cols, now))
-				if m.teamOpen(t.ID, false) {
-					for _, tr := range memberTree(t.Members) {
-						member(g, tr, u.closed != nil)
-					}
-				}
-			default:
-				t := u.team
-				sizeOf(g, t)
-				open := m.tab != "" || m.teamOpen(t.ID, true)
-				if m.tab == "" { // All: the team's line can fold it; in its own tab the title is only a title
-					entries = append(entries, entry{id: closedRow + t.ID, text: m.teamLine(*t, open, m.sel == closedRow+t.ID, width)})
+		entries = append(entries, entry{text: "  " + stMuted.Render(d.Label)}) // under the NAME header
+		for _, b := range d.Blocks {
+			for _, r := range b.Sizing {
+				hidden = append(hidden, rowOf(r, cols).cells)
+			}
+			if h := b.Head; h != nil {
+				if h.Line { // All: the team's line can fold it; in its own tab the title is only a title
+					entries = append(entries, entry{id: closedRow + h.ID, text: m.teamLine(*h, m.sel == closedRow+h.ID, width)})
 				} else {
-					entries = append(entries, entry{text: stepIndent + stepIndent + m.teamTitle(*t, func(s lipgloss.Style) lipgloss.Style { return s }, width-6)})
+					entries = append(entries, entry{text: stepIndent + stepIndent + m.teamTitle(*h, func(s lipgloss.Style) lipgloss.Style { return s }, width-6)})
 				}
-				if !open {
-					continue
-				}
-				if len(t.Members) == 0 {
-					entries = append(entries, entry{text: muted(stepIndent + "No members. Open an agent session in " + home(t.Root) + " and ask the gate to admit it.")})
-					continue
-				}
-				v := m.membersOf(*t)
-				for _, tr := range v.rows {
-					member(g, tr, false)
-				}
-				if len(v.gone) > 0 {
-					addRow(goneMembersRow(v, t.ID, cols, now))
-				}
+			}
+			if b.NoMembers != "" {
+				entries = append(entries, entry{text: muted(stepIndent + b.NoMembers)})
+			}
+			for _, r := range b.Rows {
+				addRow(rowOf(r, cols))
 			}
 		}
 	}
 	if c := slices.Index(cols, "state"); c >= 0 { // the widest state word top can show: STATE's width never follows the current states
 		phantom := make([]string, len(cols))
-		for _, s := range allStates {
-			if w, _ := stateIcon(s); lipgloss.Width(w) > lipgloss.Width(phantom[c]) {
+		for _, s := range view.AllStates {
+			if w := view.StateText(s); lipgloss.Width(w) > lipgloss.Width(phantom[c]) {
 				phantom[c] = w
 			}
 		}
@@ -632,8 +513,7 @@ func (m *topModel) list(width int, now time.Time) (string, []string, []string) {
 				case r.dim:
 					return lipgloss.NewStyle().Foreground(colSubtle)
 				case cols[c] == "state":
-					_, col := stateIcon(r.state)
-					return lipgloss.NewStyle().Foreground(col)
+					return lipgloss.NewStyle().Foreground(stateColor(r.state))
 				case cols[c] == "name":
 					return stPlain
 				}
@@ -643,31 +523,61 @@ func (m *topModel) list(width int, now time.Time) (string, []string, []string) {
 			line(e.text, e.id)
 		}
 	}
-	if len(groups) == 0 {
-		switch m.tab {
-		case "":
-			line(muted("No teams. In pi: “found a team here”"), "")
-		case tabClosed:
-			line(muted("No closed teams."), "")
-		}
+	if l.Empty != "" {
+		line(muted(l.Empty), "")
 	}
 	return header, lines, ids
 }
 
+// rowOf is a view row as a table row on cols: the cells as the list draws them. A member's or a
+// solo's cells are "-" where it has nothing; a team's line and a gone line leave them blank.
+func rowOf(r view.Row, cols []string) trow {
+	mark := "▸ "
+	if r.Open {
+		mark = "▾ "
+	}
+	val := map[string]string{}
+	blank := false
+	switch r.Kind {
+	case view.KindMember:
+		val = map[string]string{"name": memberIndent + r.Prefix + r.Name + gateTagOf(r.Gate), "role": r.Role}
+	case view.KindSolo:
+		val = map[string]string{"name": soloLead + r.Name}
+	case view.KindTeam: // " team " is the pill's width and padding; here plain, dim
+		name := mark + " team  " + r.Name
+		if r.Closed != "" {
+			name += "  " + r.Closed
+		}
+		val, blank = map[string]string{"name": name}, true
+	case view.KindGone:
+		val, blank = map[string]string{"name": memberIndent + mark + r.Name}, true
+	}
+	val["state"], val["since"] = r.StateText, r.Since
+	if !blank {
+		val["harness"], val["model"], val["ctx"], val["turns"] = r.Harness, r.Model, r.Ctx, r.Turns
+		val["unacked"], val["age"], val["cwd"] = fmt.Sprint(r.Unacked), r.Age, cmp.Or(r.Cwd, " ")
+	}
+	cells := make([]string, len(cols))
+	for c, name := range cols {
+		cells[c] = val[name]
+		if !blank {
+			cells[c] = cmp.Or(val[name], "-")
+		}
+	}
+	return trow{id: r.ID, state: r.State, dim: r.Dim, cells: cells}
+}
+
 // teamTitle is the pill, the name, `no gate` when it has none, and the held count; in room cells (0: no limit), the
 // part that does not fit ends in an ellipsis and what follows it is left out.
-func (m *topModel) teamTitle(t core.TeamState, bg func(lipgloss.Style) lipgloss.Style, room int) string {
+func (m *topModel) teamTitle(t view.TeamHead, bg func(lipgloss.Style) lipgloss.Style, room int) string {
 	warn := lipgloss.NewStyle().Foreground(colWarning)
 	type seg struct {
 		text  string
 		style lipgloss.Style
 	}
 	segs := []seg{{t.Name, stTitle}} // the gate is tagged on its member's row, not here
-	if t.Gate == "" {
-		segs = append(segs, seg{" · no gate", warn})
-	}
-	if t.Held > 0 {
-		segs = append(segs, seg{fmt.Sprintf(" · %d held", t.Held), warn})
+	for _, f := range t.Flags {
+		segs = append(segs, seg{" · " + f, warn})
 	}
 	// a pill tells it from the directory line above, which is its root
 	title := pill("team", colPrimary, colOnMain) + bg(stPlain).Render(" ")
@@ -687,7 +597,7 @@ func (m *topModel) teamTitle(t core.TeamState, bg func(lipgloss.Style) lipgloss.
 // teamLine is a live team's line in All: a selection bar and a ▾/▸ mark, then its title (gate, held
 // amber); folded, also the counts of its members by state and its unacked mail. A selected line
 // is filled to width like a row.
-func (m *topModel) teamLine(t core.TeamState, open, sel bool, width int) string {
+func (m *topModel) teamLine(t view.TeamHead, sel bool, width int) string {
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
 			return s.Background(colSurface)
@@ -698,37 +608,13 @@ func (m *topModel) teamLine(t core.TeamState, open, sel bool, width int) string 
 	if sel {
 		bar = "▌ "
 	}
-	if open {
+	if t.Open {
 		mark = "▾ "
 	}
 	room := width - 1 - 4 // as a row: the bar and the mark, and a cell of margin
 	line := bg(lipgloss.NewStyle().Foreground(colPrimary)).Render(bar) + bg(stMuted).Render(mark) + m.teamTitle(t, bg, room)
-	if !open {
-		var working, idle, other, gone int
-		for _, mem := range t.Members {
-			switch mem.State {
-			case "working":
-				working++
-			case "idle":
-				idle++
-			case "gone":
-				gone++
-			default:
-				other++
-			}
-		}
-		var parts []string
-		for _, c := range []struct {
-			n    int
-			what string
-		}{{working, "%d working"}, {idle, "%d idle"}, {other, "%d waiting"}, {gone, "%d gone"}, {t.Unacked, "unacked %d"}} { // held is in the title, amber
-			if c.n > 0 {
-				parts = append(parts, fmt.Sprintf(c.what, c.n))
-			}
-		}
-		if len(parts) == 0 {
-			parts = []string{"no members"}
-		}
+	if !t.Open {
+		parts := t.Counts // held is in the title, amber
 		// the counts that fit, whole, the last ones dropped first; none at all if the title takes the room
 		left := room - lipgloss.Width(m.teamTitle(t, func(s lipgloss.Style) lipgloss.Style { return s }, 0)) - 3
 		for len(parts) > 0 && lipgloss.Width(strings.Join(parts, " · ")) > left {
@@ -753,24 +639,6 @@ const (
 	memberIndent = stepIndent
 )
 
-// oneLineTeamRow is the row of a team listed as one line (all its members gone, or closed), on the
-// table's columns: the mark, the team as the live team's line has it, its name and "closed" for a
-// closed one in NAME; a gone member's state; in SINCE when it was last active (or closed). Dim, the
-// rest empty; its members, when open, follow as rows.
-func oneLineTeamRow(id, name, mark, closed string, at int64, cols []string, now time.Time) trow {
-	nameCell := mark + " team  " + name // " team " is the pill's width and padding; here plain, dim
-	if closed != "" {
-		nameCell += "  " + closed
-	}
-	state, _ := stateIcon("gone")
-	val := map[string]string{"name": nameCell, "state": state, "since": ago(at, now)}
-	cells := make([]string, len(cols))
-	for c, col := range cols {
-		cells[c] = val[col]
-	}
-	return trow{id: closedRow + id, state: "gone", dim: true, cells: cells}
-}
-
 // trow is one row of the list's table: its cells, and what the row is (a member, a solo, a team's
 // folded gone members) for its selection and colours.
 type trow struct {
@@ -778,27 +646,6 @@ type trow struct {
 	id    string
 	state string
 	dim   bool
-}
-
-// goneMembersRow is the row of a team's folded gone members, on the table's columns like a member
-// row: ▸ (▾ open) and how many in NAME, a gone member's state, and in SINCE when the latest went
-// gone; every other cell is empty. Dim like the gone rows it stands for.
-func goneMembersRow(v teamView, teamID string, cols []string, now time.Time) trow {
-	mark := "▸ "
-	if v.open {
-		mark = "▾ "
-	}
-	var last int64
-	for _, g := range v.gone {
-		last = max(last, g.StateSince)
-	}
-	state, _ := stateIcon("gone")
-	val := map[string]string{"name": memberIndent + mark + plural(len(v.gone), "member"), "state": state, "since": ago(last, now)}
-	cells := make([]string, len(cols))
-	for c, name := range cols {
-		cells[c] = val[name]
-	}
-	return trow{id: goneRow + teamID, state: "gone", dim: true, cells: cells}
 }
 
 func (m *topModel) sideTitle() string {
@@ -814,182 +661,112 @@ func (m *topModel) sideTitle() string {
 }
 
 // sidebar is the selected row's Overview (every fact top has of it) or its Tail, in w x h.
+// overviewLabel is the Overview's label cell: wider than its longest label (`last turn`), so a gap
+// always separates the label from its value.
+const overviewLabel = 10
+
+// selMember is the selected member and its team, nil when a solo or a row of another kind is selected.
+func (m *topModel) selMember() (*core.MemberState, *core.TeamState) {
+	for i := range m.ps.Teams {
+		for j := range m.ps.Teams[i].Members {
+			if m.ps.Teams[i].Members[j].ID == m.sel {
+				return &m.ps.Teams[i].Members[j], &m.ps.Teams[i]
+			}
+		}
+	}
+	return nil, nil
+}
+
 func (m *topModel) sidebar(w, h int, now time.Time) []string {
-	var team *core.TeamState
-	var mem *core.MemberState
-	var solo *core.SoloState
-	teams := make([]*core.TeamState, 0, len(m.ps.Teams)+len(m.ps.Closed))
-	for i := range m.ps.Teams {
-		teams = append(teams, &m.ps.Teams[i])
-	}
-	kv := func(k, v string) string { return " " + stMuted.Render(fmt.Sprintf("%-9s", k)) + v }
-	for i := range m.ps.Teams {
-		t := &m.ps.Teams[i]
-		if m.sel == goneRow+t.ID { // the line of its folded gone members
-			_, gone := foldGone(t.Members)
-			out := []string{" " + lipgloss.NewStyle().Bold(true).Render(fmt.Sprint(len(gone), " gone")) + stMuted.Render(" · "+t.Name), ""}
-			for _, g := range gone {
-				out = append(out, kv(g.Role, g.Name+"  "+stMuted.Render(ago(g.StateSince, now)+" ago")))
-			}
-			return append(out, "", " "+stMuted.Render("enter lists them in the tree"))
-		}
-		if m.sel == closedRow+t.ID && !dead(*t) { // a live team's line: the team's facts
-			var working, idle, gone int
-			for _, mem := range t.Members {
-				switch mem.State {
-				case "working":
-					working++
-				case "idle":
-					idle++
-				case "gone":
-					gone++
-				}
-			}
-			out := []string{" " + lipgloss.NewStyle().Bold(true).Render(t.Name) + stMuted.Render(" · open"), "", kv("members", fmt.Sprint(len(t.Members)))}
-			for _, c := range []struct {
-				what string
-				n    int
-			}{{"working", working}, {"idle", idle}, {"gone", gone}} {
-				if c.n > 0 {
-					out = append(out, kv(c.what, fmt.Sprint(c.n)))
-				}
-			}
-			return append(out, kv("gate", orDash(t.Gate)), kv("held", fmt.Sprint(t.Held)), kv("unacked", fmt.Sprint(t.Unacked)), kv("root", home(t.Root)),
-				" "+stMuted.Render("enter folds or opens its members"))
-		}
-		if m.sel == closedRow+t.ID { // a dead team's line: the team's facts
-			return []string{" " + lipgloss.NewStyle().Bold(true).Render(t.Name) + stMuted.Render(" · open, all gone"), "",
-				kv("active", ago(unit{team: t}.active(), now)+" ago"), kv("gate", orDash(t.Gate)),
-				kv("members", fmt.Sprint(len(t.Members))), kv("root", home(t.Root)),
-				" " + stMuted.Render("enter shows its members")}
-		}
-	}
-	for i := range m.ps.Closed {
-		c := &m.ps.Closed[i]
-		if m.sel == closedRow+c.ID { // a closed team's line: the team's facts
-			return []string{" " + lipgloss.NewStyle().Bold(true).Render(c.Name) + stMuted.Render(" · closed"), "",
-				kv("closed", ago(c.ClosedAt, now)+" ago"), kv("by", cmp.Or(c.ClosedBy, "admin")), kv("gate", orDash(c.Gate)),
-				kv("members", fmt.Sprint(len(c.Members))), kv("root", home(c.Root)),
-				" " + stMuted.Render("enter shows its members")}
-		}
-		teams = append(teams, &c.TeamState)
-	}
-	for _, t := range teams {
-		for j := range t.Members {
-			if t.Members[j].ID == m.sel {
-				team, mem = t, &t.Members[j]
-			}
-		}
-	}
-	for i := range m.ps.Solos {
-		if m.ps.Solos[i].ID == m.sel {
-			solo = &m.ps.Solos[i]
-		}
-	}
-	if mem == nil && solo == nil {
+	m.modelRow = -1
+	d := view.Describe(m.ps.State, m.sel, m.stats(), now)
+	switch d.Kind {
+	case view.DetailNone:
 		return []string{" " + stMuted.Render("Nothing selected.")}
+	case view.DetailParticipant:
+		if m.sideTab == sideTail {
+			return m.tailLines(w, h)
+		}
 	}
+	kv := func(k, v string) string { return " " + stMuted.Render(fmt.Sprintf("%-*s", overviewLabel, k)) + v }
+	head := " " + lipgloss.NewStyle().Bold(true).Render(d.Title) + stMuted.Render(" · "+d.Sub)
+	if d.State != "" {
+		icon, col := stateIcon(d.State)
+		head = " " + lipgloss.NewStyle().Bold(true).Render(d.Title) + stMuted.Render(" · "+d.Sub+" ") + pill(icon, col, colInk)
+	}
+	out := []string{head, ""}
+	out = append(out, assignmentRows(d.Task, w-1-overviewLabel)...)
+	for _, f := range d.Facts {
+		v := f.Value
+		if f.Pick { // its model can be changed here: blue with a ▾, tinted under the mouse
+			v += " ▾"
+			m.modelRow, m.modelOf, m.modelW = len(out), d.ID, lipgloss.Width(v)
+			style := lipgloss.NewStyle().Foreground(colLink)
+			if m.hover == d.ID {
+				style = style.Background(colSurface)
+			}
+			v = style.Render(v)
+		}
+		if f.Note != "" {
+			v += "  " + stMuted.Render(f.Note)
+		}
+		if f.Muted {
+			v = stMuted.Render(v)
+		}
+		out = append(out, kv(f.Label, v))
+	}
+	if d.Hint != "" {
+		if d.HintGap {
+			out = append(out, "")
+		}
+		out = append(out, " "+stMuted.Render(d.Hint))
+	}
+	return out
+}
 
-	if m.sideTab == sideTail {
-		if !m.tailable(m.sel) {
-			return []string{" " + stMuted.Render("No tail: piggery has no log of it to read.")}
-		}
-		var lines []string
-		if m.tail.worker == m.sel { // a fetch in flight may still carry the previous worker's
-			lines = m.tail.lines
-		}
-		if len(lines) == 0 {
-			return []string{" " + stMuted.Render("No output yet.")}
-		}
-		if n := min(h, topTailLines); len(lines) > n {
-			lines = lines[len(lines)-n:]
-		}
-		out := make([]string, len(lines))
-		for i, l := range lines {
-			out[i] = " " + styleTail(l, w-2)
-		}
-		return out
+// tailLines is the selected participant's Tail: the latest lines of its log, in w x h.
+func (m *topModel) tailLines(w, h int) []string {
+	if !m.tailable(m.sel) {
+		return []string{" " + stMuted.Render("No tail: piggery has no log of it to read.")}
 	}
-
-	names := m.names()
-	var name, role, state, ref string
-	var since, created int64
-	var unacked int
-	if mem != nil {
-		name, role, state, since, unacked, ref = mem.Name, mem.Role, mem.State, mem.StateSince, mem.Unacked, mem.ID
-		created = mem.CreatedAt
-	} else {
-		name, role, state, since, unacked, ref = solo.Name, "solo", solo.State, solo.StateSince, solo.Unacked, solo.ID
-		created = solo.CreatedAt
+	var lines []string
+	if m.tail.worker == m.sel { // a fetch in flight may still carry the previous worker's
+		lines = m.tail.lines
 	}
-	came := "joined " + time.UnixMilli(created).Format("15:04") // a session opened by the Human
-	if mem != nil && mem.Headless && mem.SpawnedBy != "" {
-		came = "spawned " + time.UnixMilli(created).Format("15:04") + " by " + orDash(names[mem.SpawnedBy])
+	if len(lines) == 0 {
+		return []string{" " + stMuted.Render("No output yet.")}
 	}
-	icon, col := stateIcon(state)
-	out := []string{" " + lipgloss.NewStyle().Bold(true).Render(name) + stMuted.Render(" · "+role+" ") + pill(icon, col, colInk), ""}
-	if mem != nil {
-		out = append(out, assignmentRows(mem.Assignment, w-10, now)...)
-		kind := "session"
-		if mem.Headless {
-			kind = "headless worker"
-		}
-		if mem.Harness != "" {
-			kind = mem.Harness + " " + kind
-		}
-		if mem.Gate {
-			kind += " · gate"
-		}
-		out = append(out, kv("team", team.Name), kv("kind", kind), kv("model", modelLabel(mem.Model, mem.Thinking)))
+	if n := min(h, topTailLines); len(lines) > n {
+		lines = lines[len(lines)-n:]
 	}
-	if ws, ok := m.stats()[ref]; ok {
-		ctx := "-"
-		if ws.hasCtx {
-			ctx = tokens(ws.ctx)
-		}
-		out = append(out, kv("ctx", ctx), kv("turns", fmt.Sprint(ws.turns)))
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = " " + styleTail(l, w-2)
 	}
-	out = append(out, " "+came, kv("since", ago(since, now)), kv("unacked", fmt.Sprint(unacked)))
-	if mem != nil {
-		if mem.ReportsTo != "" {
-			out = append(out, kv("reports", orDash(names[mem.ReportsTo])))
-		}
-		if mem.LastTurnEnd > 0 {
-			out = append(out, kv("last turn", ago(mem.LastTurnEnd, now)+" ago"))
-		}
-		out = append(out, kv("root", home(team.Root)))
-	} else {
-		out = append(out, kv("model", modelLabel(solo.Model, "")), kv("cwd", home(solo.Cwd)))
-	}
-	return append(out, kv("id", stMuted.Render(ref)))
+	return out
 }
 
 // assignmentRows is the member's current task in the sidebar (width n after the 9-cell label):
 // its title on at most two lines, who gave it and when, how its reply chain stands (muted), and,
 // once the member handed back, the newer mail from the assigner that is not part of the chain
 // (a note, or a task sent without op assign). Nothing when it has none.
-func assignmentRows(a *core.Assignment, n int, now time.Time) []string {
-	if a == nil {
+func assignmentRows(t *view.Task, n int) []string {
+	if t == nil {
 		return nil
 	}
 	n = max(n, 10)
-	indent := strings.Repeat(" ", 10)
-	lines := wrapTwo(fmt.Sprintf("#%d %s", a.Seq, a.Title), n)
-	out := []string{" " + stMuted.Render(fmt.Sprintf("%-9s", "task")) + lines[0]}
+	indent := strings.Repeat(" ", 1+overviewLabel)
+	lines := wrapTwo(t.Title, n)
+	out := []string{" " + stMuted.Render(fmt.Sprintf("%-*s", overviewLabel, "task")) + lines[0]}
 	for _, l := range lines[1:] {
 		out = append(out, indent+l)
 	}
-	out = append(out, indent+"from "+a.From+" · "+ago(a.At, now)+" ago")
-	if l := a.Latest; l != nil {
-		what := "reply"
-		if l.ByMember {
-			what = "handed back"
-		}
-		out = append(out, indent+stMuted.Render(fmt.Sprintf("%s #%d · %s ago", what, l.Seq, ago(l.At, now))))
+	out = append(out, indent+t.From)
+	if t.Chain != "" {
+		out = append(out, indent+stMuted.Render(t.Chain))
 	}
-	if x := a.Newer; x != nil {
-		head, tail := fmt.Sprintf("#%d ", x.Seq), " · "+ago(x.At, now)+" ago"
-		out = append(out, " "+stMuted.Render(fmt.Sprintf("%-9s", "mail")+head+truncate(x.Title, n-lipgloss.Width(head+tail))+tail))
+	if x := t.Mail; x != nil {
+		out = append(out, " "+stMuted.Render(fmt.Sprintf("%-*s", overviewLabel, "mail")+x.Head+truncate(x.Title, n-lipgloss.Width(x.Head+x.Tail))+x.Tail))
 	}
 	return out
 }
@@ -1015,43 +792,20 @@ func wrapTwo(s string, n int) []string {
 	return []string{strings.TrimSpace(s[:at]), truncate(strings.TrimSpace(s[at:]), n)}
 }
 
-// eventRows are the latest events, newest first (n of them), as cells (time, who, event, target)
-// with the event's type.
-// eventTime is an event's local time: 15:04:05 today, 01-02 15:04 on an earlier day.
-func eventTime(ts int64, now time.Time) string {
-	t, now := time.UnixMilli(ts).Local(), now.Local()
-	if y, mo, d := t.Date(); y == now.Year() && mo == now.Month() && d == now.Day() {
-		return t.Format("15:04:05")
+func (m *topModel) eventRows(n int, now time.Time) (rows [][]string, tones []view.Tone) {
+	for _, ev := range view.EventRows(m.ps.State, n, now) {
+		rows = append(rows, []string{ev.Time, ev.Who, ev.Type, ev.Target})
+		tones = append(tones, ev.Tone)
 	}
-	return t.Format("01-02 15:04")
-}
-
-func (m *topModel) eventRows(n int, now time.Time) (rows [][]string, types []string) {
-	names := m.names()
-	name := func(id string) string {
-		if n := names[id]; n != "" || len(id) <= 6 {
-			return n
-		}
-		return id[len(id)-6:]
-	}
-	for i := len(m.ps.Events) - 1; i >= 0 && len(rows) < n; i-- {
-		ev := m.ps.Events[i]
-		target := ""
-		if ev.RefID != "" && ev.RefID != ev.Participant && ev.RefID != ev.TeamID {
-			target = name(ev.RefID)
-		}
-		rows = append(rows, []string{eventTime(ev.Ts, now), name(ev.Participant), ev.Type, target})
-		types = append(types, ev.Type)
-	}
-	return rows, types
+	return rows, tones
 }
 
 // eventStyle is an event row's colour: muted, amber for a refusal, red for an exit.
-func eventStyle(typ string) lipgloss.Style {
-	switch typ {
-	case "denied", "held":
+func eventStyle(tone view.Tone) lipgloss.Style {
+	switch tone {
+	case view.ToneWarning:
 		return lipgloss.NewStyle().Foreground(colWarning)
-	case "exited", "gone":
+	case view.ToneDanger:
 		return lipgloss.NewStyle().Foreground(colError)
 	}
 	return stMuted
@@ -1068,15 +822,15 @@ func (m *topModel) eventsBox(width, height int, now time.Time) []string {
 		n = 5
 	}
 	if !m.events { // folded: one line of text, no rule, indented like the key lines
-		rows, types := m.eventRows(1, now)
+		rows, tones := m.eventRows(1, now)
 		line := " " + stTitle.Render("● Events")
 		if len(rows) > 0 {
 			latest := truncate(strings.TrimSpace(strings.Join(rows[0], " ")), max(width-lipgloss.Width(" ● Events · "), 0))
-			line += stRule.Render(" · ") + eventStyle(types[0]).Render(latest)
+			line += stRule.Render(" · ") + eventStyle(tones[0]).Render(latest)
 		}
 		return []string{line}
 	}
-	rows, types := m.eventRows(n, now)
+	rows, tones := m.eventRows(n, now)
 	inner := width - 2
 	w := fitCols(eventCols, rows, inner-3, eventFit)
 	lines := make([]string, len(rows))
@@ -1084,75 +838,30 @@ func (m *topModel) eventsBox(width, height int, now time.Time) []string {
 		lines = []string{" " + stMuted.Render("No events yet.")}
 	}
 	for i, r := range rows {
-		st := eventStyle(types[i])
+		st := eventStyle(tones[i])
 		lines[i] = row(r, w, nil, func(int) lipgloss.Style { return st }, false, inner)
 	}
 	return box(stTitle.Render("Events"), lines, width, max(len(rows), 1)+2)
 }
 
-// styleTail colors a tail line (tailLine's forms) cut to n cells: tool calls secondary with
+// styleTail colors a tail line (view.ParseTail's kinds) cut to n cells: tool calls secondary with
 // dim arguments, results muted (errors red), problems amber, assistant text plain.
 func styleTail(l string, n int) string {
-	switch {
-	case strings.HasPrefix(l, "> "):
-		name, args, _ := strings.Cut(strings.TrimPrefix(l, "> "), " ")
-		head := truncate("▸ "+name, n)
-		return lipgloss.NewStyle().Foreground(colTool).Render(head) + stMuted.Render(truncate("  "+args, n-lipgloss.Width(head)))
-	case strings.HasPrefix(l, "< "):
-		head, text, _ := strings.Cut(strings.TrimPrefix(l, "< "), ": ")
-		if name, ok := strings.CutSuffix(head, " error"); ok {
-			return lipgloss.NewStyle().Foreground(colError).Render(truncate("✗ "+name+"  "+text, n))
-		}
-		return stMuted.Render(truncate("✓ "+text, n))
-	case strings.HasPrefix(l, "! "):
-		return lipgloss.NewStyle().Foreground(colWarning).Render(truncate(l, n))
-	case strings.HasPrefix(l, "-- "):
-		return stRule.Render(truncate(l, n))
-	case strings.HasPrefix(l, "user: "):
-		return stMuted.Render(truncate(l, n))
+	t := view.ParseTail(l)
+	switch t.Kind {
+	case view.TailTool:
+		head := truncate(t.Text, n)
+		return lipgloss.NewStyle().Foreground(colTool).Render(head) + stMuted.Render(truncate(t.Rest, n-lipgloss.Width(head)))
+	case view.TailError:
+		return lipgloss.NewStyle().Foreground(colError).Render(truncate(t.Text, n))
+	case view.TailResult, view.TailUser:
+		return stMuted.Render(truncate(t.Text, n))
+	case view.TailWarning:
+		return lipgloss.NewStyle().Foreground(colWarning).Render(truncate(t.Text, n))
+	case view.TailRule:
+		return stRule.Render(truncate(t.Text, n))
 	}
-	return truncate(strings.TrimPrefix(l, "assistant: "), n)
-}
-
-// ago is the time since ms in one unit: 12s, 4m, 3h, 2d; "-" when unknown.
-func ago(ms int64, now time.Time) string {
-	if ms == 0 {
-		return "-"
-	}
-	d := max(now.Sub(time.UnixMilli(ms)), 0)
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 48*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	}
-	return fmt.Sprintf("%dd", int(d.Hours()/24))
-}
-
-func plural(n int, s string) string {
-	if n == 1 {
-		return "1 " + s
-	}
-	return fmt.Sprintf("%d %ss", n, s)
-}
-
-func orDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
-
-// home shortens a path under the home directory to ~/…
-func home(p string) string {
-	if h, err := os.UserHomeDir(); err == nil && h != "" {
-		if rel, err := filepath.Rel(h, p); err == nil && !strings.HasPrefix(rel, "..") {
-			return filepath.Join("~", rel)
-		}
-	}
-	return p
+	return truncate(t.Text, n)
 }
 
 // truncate cuts plain text to n display cells, with … when cut.
@@ -1176,19 +885,6 @@ func truncate(s string, n int) string {
 	return b.String() + "…"
 }
 
-// versionNotes are what top's footer can end with, longest first: the daemon's build version and,
-// when this binary is another build, the fix (`dev-9057651 (cli dev-99443dc: piggery restart)`, then
-// the version alone, amber). None when the daemon does not report a version.
-func versionNotes(daemon, self string) (notes []string, mismatch bool) {
-	switch {
-	case daemon == "":
-		return nil, false
-	case daemon != self:
-		return []string{daemon + " (cli " + self + ": piggery restart)", daemon}, true
-	}
-	return []string{daemon}, false
-}
-
 // withVersion right-aligns the first of notes that fits on the footer's last line, muted (amber
 // for a mismatch); when none fits beside the key hints, the version goes and the hints stay whole.
 func withVersion(line string, notes []string, mismatch bool, width int) string {
@@ -1210,7 +906,10 @@ func (m *topModel) keyLines(w int) []string {
 	if m.help.ShowAll {
 		return strings.Split(m.help.View(m.keys), "\n")
 	}
-	return keyGrid(w, m.keys.look(), m.keys.act())
+	act := m.keys.act()
+	mem, team := m.selMember()
+	act[1].SetEnabled(mem != nil && view.Pickable(*mem, team.ID, m.ps.Closed)) // M model is always listed, dim where it does nothing
+	return keyGrid(w, m.keys.look(), act)
 }
 
 // keyGrid lays the short key lines out as columns: the i-th entry of every line starts at the
@@ -1229,12 +928,29 @@ func keyGrid(w int, lines ...[]key.Binding) []string {
 	}
 	out := make([]string, len(lines))
 	for li, l := range lines {
+		for len(l) > 1 { // the entries that fit, whole: the last ones go before one is cut mid-word
+			end := 0
+			for i, k := range l {
+				end += lipgloss.Width(cell(k)) + 3
+				if i < len(l)-1 {
+					end += cols[i] - lipgloss.Width(cell(k))
+				}
+			}
+			if end-3 <= w {
+				break
+			}
+			l = l[:len(l)-1]
+		}
 		var b strings.Builder
 		for i, k := range l {
 			if i > 0 {
 				b.WriteString("   ")
 			}
-			b.WriteString(stMuted.Render(k.Help().Key) + " " + stRule.Render(k.Help().Desc))
+			keyStyle := stMuted
+			if !k.Enabled() { // a key that does nothing here: dimmer than the others, key and description alike
+				keyStyle = stRule
+			}
+			b.WriteString(keyStyle.Render(k.Help().Key) + " " + stRule.Render(k.Help().Desc))
 			if i < len(l)-1 {
 				b.WriteString(strings.Repeat(" ", cols[i]-lipgloss.Width(cell(k))))
 			}

@@ -161,6 +161,44 @@ type ModelArgs struct {
 	Thinking string `json:"thinking,omitempty"` // as the harness names levels; "" keeps it
 }
 
+type ModelsResult struct {
+	Models []string `json:"models"` // as SetModel takes them
+}
+
+// Models lists the models a live headless worker's harness offers, as SetModel takes them, for a
+// picker. The list is the driver's and core never reads it. Refused: a session, a worker that is not
+// running (a closed team's workers are gone), a harness that cannot list.
+func (e *Engine) Models(ctx context.Context, a AdminTarget) (ModelsResult, error) {
+	w, headless, caps, err := e.adminTargetCaps(ctx, a)
+	if err != nil {
+		return ModelsResult{}, err
+	}
+	if !headless {
+		return ModelsResult{}, errf(CodeInvalid, "%s is not a headless worker; its model is chosen in its own session", w.name)
+	}
+	if w.state == "gone" {
+		return ModelsResult{}, errf(CodeInvalid, "%s is not running", w.name)
+	}
+	d := e.runtimeFor(w.harness)
+	if d == nil {
+		return ModelsResult{}, errf(CodeUnsupported, "no runtime driver for harness %q", w.harness)
+	}
+	if lacksCap(caps, CapListModels) {
+		return ModelsResult{}, errf(CodeInvalid, "%s: this harness cannot list its models", w.name)
+	}
+	models, err := d.Models(ctx, w.id)
+	if errors.Is(err, ErrNotRunning) {
+		return ModelsResult{}, errf(CodeInvalid, "%s is not running", w.name)
+	}
+	if err != nil {
+		return ModelsResult{}, errf(CodeInvalid, "%s: %v", w.name, err)
+	}
+	if models == nil {
+		models = []string{}
+	}
+	return ModelsResult{Models: models}, nil
+}
+
 type ModelResult struct {
 	ParticipantID string `json:"participant_id"`
 	Live          bool   `json:"live"` // the running worker switched now; else it applies at resume

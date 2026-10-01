@@ -1,0 +1,49 @@
+{
+ "providers": [
+  {
+   "id": "deepseek-official",
+   "name": "DeepSeek"
+  },
+  {
+   "id": "deepseek-account",
+   "name": "DeepSeek Account"
+  },
+  {
+   "id": "example",
+   "name": "example"
+  }
+ ],
+ "models": {
+  "deepseek-official": [
+   {
+    "provider": "deepseek-official",
+    "id": "deepseek-flash",
+    "name": "DeepSeek-V41-Flash",
+    "inputModalities": [
+     "text",
+     "image"
+    ]
+   },
+   {
+    "provider": "deepseek-official",
+    "id": "deepseek-v4-pro",
+    "name": "DeepSeek-V4-Pro",
+    "description": "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost.",
+    "inputModalities": [
+     "text"
+    ]
+   }
+  ],
+  "deepseek-account": [],
+  "example": [
+   {
+    "provider": "example",
+    "id": "glm-5.3-flash",
+    "name": "glm-5.3-flash",
+    "inputModalities": [
+     "text"
+    ]
+   }
+  ]
+ }
+}

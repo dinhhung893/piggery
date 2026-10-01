@@ -225,6 +225,26 @@ func (piCodec) setModel(ctx context.Context, w *worker, model string) error {
 	return err
 }
 
+// models lists what pi (and omp, which answers the same) offers: rpc get_available_models, as
+// provider/id, the form setModel takes.
+func (piCodec) models(ctx context.Context, w *worker) ([]string, error) {
+	r, err := w.call(ctx, commandTimeout, map[string]string{"type": "get_available_models"})
+	if err != nil {
+		return nil, err
+	}
+	var d struct {
+		Models []struct{ Provider, ID string } `json:"models"`
+	}
+	if err := json.Unmarshal(r.Data, &d); err != nil {
+		return nil, fmt.Errorf("%s get_available_models: %w", w.harness, err)
+	}
+	out := make([]string, 0, len(d.Models))
+	for _, m := range d.Models {
+		out = append(out, m.Provider+"/"+m.ID)
+	}
+	return out, nil
+}
+
 // setThinking sets the thinking level (rpc set_thinking_level), then checks that pi runs it:
 // pi accepts levels it does not keep, so the check is get_state. On a mismatch
 // the level it ran before is set again, so a refused change leaves the worker as it was (seen

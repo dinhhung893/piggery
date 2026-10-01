@@ -19,6 +19,7 @@ import (
 	"github.com/sting8k/piggery/internal/core"
 	"github.com/sting8k/piggery/internal/proto"
 	"github.com/sting8k/piggery/internal/server"
+	"github.com/sting8k/piggery/internal/view"
 	"github.com/sting8k/piggery/manifests"
 )
 
@@ -671,7 +672,7 @@ func (e *env) gc(args []string) error {
 					fmt.Fprintf(w, "  %s\n", fmtCounts(g.Counts))
 				}
 				if g.LogDirs > 0 {
-					fmt.Fprintf(w, "  run logs, scratch and session data deleted: %d entries, %s\n", g.LogDirs, tokens(int(g.LogBytes))+"B")
+					fmt.Fprintf(w, "  run logs, scratch and session data deleted: %d entries, %s\n", g.LogDirs, view.Tokens(int(g.LogBytes))+"B")
 				}
 			}
 			if n := len(r.ExpiredArchives); n > 0 {

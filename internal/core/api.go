@@ -335,6 +335,7 @@ type PresenceArgs struct {
 const (
 	CapAbort        = "abort"         // cancel the current turn
 	CapSetModel     = "set_model"     // change model or thinking level while it runs
+	CapListModels   = "list_models"   // list the models SetModel accepts, while it runs
 	CapWake         = "wake"          // an idle participant can be woken by mail
 	CapSteer        = "steer"         // mail can join a running turn
 	CapSystemPrompt = "system_prompt" // the role card goes in its system prompt
@@ -372,6 +373,7 @@ type HarnessEventArgs struct {
 	Model          string `json:"model,omitempty"`       // model_changed
 	Thinking       string `json:"thinking,omitempty"`    // model_changed
 	PromptID       string `json:"prompt_id,omitempty"`   // turn_start, tool_boundary, turn_end: the harness's key of the turn
+	Wake           bool   `json:"wake,omitempty"`        // turn_start: a mail check (a wake, a reconnect), not a turn: with nothing to give, nothing is opened
 	StopHookActive bool   `json:"stop_hook_active,omitempty"`
 }
 

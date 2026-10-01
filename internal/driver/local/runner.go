@@ -219,10 +219,19 @@ type deliverer interface {
 	deliver(w *worker, d core.Delivery) error
 }
 
+// modelLister is a codec that can list the models its harness offers (core.CapListModels): each
+// as setModel takes it, in the harness's order.
+type modelLister interface {
+	models(ctx context.Context, w *worker) ([]string, error)
+}
+
 func (d *Driver) Capabilities() []string {
 	caps := []string{core.CapAbort, core.CapSetModel, core.CapWake, core.CapSteer, core.CapSystemPrompt, core.CapUsage}
 	if _, ok := d.codec.(deliverer); ok {
 		caps = append(caps, core.CapDeliver)
+	}
+	if _, ok := d.codec.(modelLister); ok {
+		caps = append(caps, core.CapListModels)
 	}
 	return caps
 }
@@ -413,6 +422,19 @@ func (d *Driver) SetModel(ctx context.Context, participantID, model string) erro
 		return err
 	}
 	return d.codec.setModel(ctx, w, model)
+}
+
+// Models lists the models the live worker's harness offers, as SetModel takes them.
+func (d *Driver) Models(ctx context.Context, participantID string) ([]string, error) {
+	w, err := d.live(participantID)
+	if err != nil {
+		return nil, err
+	}
+	l, ok := d.codec.(modelLister)
+	if !ok {
+		return nil, fmt.Errorf("%s cannot list its models", w.harness)
+	}
+	return l.models(ctx, w)
 }
 
 // SetThinking sets the live worker's thinking level; a level the harness does not run is an

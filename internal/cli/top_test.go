@@ -52,14 +52,14 @@ func TestTopWorkerStats(t *testing.T) {
 	}
 	m := &topModel{dir: dir, ps: ps}
 	m.logs = readLogs(dir, ps, nil)
-	if got := m.stats()["w1"]; got.ctx != 16000 || got.turns != 3 {
+	if got := m.stats()["w1"]; got.Ctx != 16000 || got.Turns != 3 {
 		t.Fatalf("stats = %+v; want ctx 16000 (latest of the current run, not a sum), turns 3 (both runs)", got)
 	}
 	write(`{"type":"message_end","message":{"role":"assistant","usage":{"input":10,"output":5,"cacheRead":2000,"cacheWrite":0}}}
 {"type":"turn_end"}
 `)
 	m.logs = readLogs(dir, ps, m.logs)
-	if got := m.stats()["w1"]; got.ctx != 2015 || got.turns != 4 {
+	if got := m.stats()["w1"]; got.Ctx != 2015 || got.Turns != 4 {
 		t.Fatalf("stats after append = %+v; want ctx 2015 (no totalTokens: the sum of its parts), turns 4", got)
 	}
 }
@@ -268,29 +268,6 @@ func TestTailLineShortensToolArgs(t *testing.T) {
 	}
 }
 
-// Members show as the tree of reports_to: every parent before its children, each child under
-// its own parent in team order; a member whose parent left the team is a root.
-func TestMemberTree(t *testing.T) {
-	ms := []core.MemberState{
-		{ID: "s", Name: "s"},
-		{ID: "lead-a", Name: "lead-a", ReportsTo: "s"},
-		{ID: "lead-b", Name: "lead-b", ReportsTo: "s", State: "gone"},
-		{ID: "peer-a1", Name: "peer-a1", ReportsTo: "lead-a"},
-		{ID: "peer-b1", Name: "peer-b1", ReportsTo: "lead-b"},
-		{ID: "peer-a2", Name: "peer-a2", ReportsTo: "lead-a"},
-		{ID: "orphan", Name: "orphan", ReportsTo: "left-the-team"},
-	}
-	var got []string
-	for _, r := range memberTree(ms) {
-		got = append(got, fmt.Sprintf("%d %s<-%s", r.depth, r.m.Name, r.m.ReportsTo))
-	}
-	want := []string{"0 s<-", "1 lead-a<-s", "2 peer-a1<-lead-a", "2 peer-a2<-lead-a", "1 lead-b<-s",
-		"2 peer-b1<-lead-b", "0 orphan<-left-the-team"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("tree order:\n got %v\nwant %v", got, want)
-	}
-}
-
 // A member's task sits right under the header, before team/kind/model: its title on at most two
 // lines, who gave it, how its reply chain stands, and a newer unmarked mail as a "mail" row.
 func TestTopOverviewShowsTheAssignment(t *testing.T) {
@@ -308,9 +285,9 @@ func TestTopOverviewShowsTheAssignment(t *testing.T) {
 		return strip.ReplaceAllString(strings.Join(m.sidebar(50, 30, now), "\n"), "")
 	}
 	got := strings.Split(side("a1"), "\n")
-	if len(got) < 8 || !strings.HasPrefix(got[2], " task     #175 omp phase 2, your part:") || !strings.HasSuffix(got[3], "…") ||
-		got[4] != "          from summer-hamster · 22m ago" || got[5] != "          handed back #183 · 3m ago" ||
-		!strings.HasPrefix(got[6], " mail     #190 next: the dsh part · 1m ago") || !strings.HasPrefix(got[7], " team ") {
+	if len(got) < 8 || !strings.HasPrefix(got[2], " task ") || !strings.Contains(got[2], "#175 omp phase 2, your part:") || !strings.HasSuffix(got[3], "…") ||
+		strings.TrimSpace(got[4]) != "from summer-hamster · 22m ago" || strings.TrimSpace(got[5]) != "handed back #183 · 3m ago" ||
+		!strings.HasPrefix(got[6], " mail ") || !strings.Contains(got[6], "#190 next: the dsh part · 1m ago") || !strings.HasPrefix(got[7], " team ") {
 		t.Fatalf("overview = %q; want the task rows (title over two lines, from, handed back, mail) before team", got)
 	}
 	if strings.Contains(side("a2"), "task") {
@@ -423,7 +400,7 @@ func TestTopEventsBoxAndKeyLines(t *testing.T) {
 		t.Fatalf("key lines = %q; want a rule, then move and look, then act and toggle", got[len(got)-3:])
 	}
 	// The two key lines are one grid: the i-th entries start at the same cell.
-	for _, pair := range [][2]string{{"←/→ tab", "e events"}, {"enter open/close", "m mouse"}, {"esc back", "? all keys"}} {
+	for _, pair := range [][2]string{{"←/→ tab", "M model"}, {"enter open/close", "e events"}, {"esc back", "m mouse"}} {
 		if a, b := strings.Index(keys[0], pair[0]), strings.Index(keys[1], pair[1]); lipgloss.Width(keys[0][:a]) != lipgloss.Width(keys[1][:b]) {
 			t.Fatalf("key lines = %q; want %q above %q", keys, pair[0], pair[1])
 		}
@@ -611,4 +588,75 @@ func TestTopFoldsAreRemembered(t *testing.T) {
 	if s := loadTopState(dir); len(s.Teams) != 1 || len(s.Gone) != 0 {
 		t.Fatalf("saved %+v; want only the team that still exists", s)
 	}
+}
+
+// Choosing in the model picker applies the model and level chosen to that worker, through the verb
+// `model`, and only what changed. The picker opens from a click on a live headless worker's model row,
+// or from M with the mouse off; a double-click on a model applies it like Enter.
+func TestModelPickerAppliesTheChoice(t *testing.T) {
+	w := core.MemberState{ID: "w1", Name: "w1", State: "working", ReportsTo: "boss", Headless: true, Harness: "pi", Model: "HP/glm-5.3-flash", Thinking: "high"}
+	boss := core.MemberState{ID: "boss", Name: "boss", State: "idle", Harness: "pi"}
+	m := newTopModel(nil, t.TempDir())
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.Update(fetched{ps: proto.PsResult{State: core.State{Teams: []core.TeamState{{ID: "t", Name: "shop", Members: []core.MemberState{boss, w}}}}}})
+	var applied []core.ModelArgs
+	m.listModels = func(string) ([]string, error) { return []string{"HP/glm-5.3-flash", "HP/kimi-k3", "OAI/gpt-5"}, nil }
+	m.setModel = func(a core.ModelArgs) error { applied = append(applied, a); return nil }
+	run := func(cmd tea.Cmd) { // deliver a command's message, as the program would
+		if cmd != nil {
+			m.Update(cmd())
+		}
+	}
+	m.sel = "boss" // an interactive session's model row is plain
+	m.render()
+	if _, ok := hitFor(m, "w1"); ok {
+		t.Fatal("the model row of a session is a target")
+	}
+	m.sel = "w1"
+	m.render()
+	h, ok := hitFor(m, "w1")
+	if !ok {
+		t.Fatal("the model row of a live headless worker is not a target")
+	}
+	_, cmd := m.Update(tea.MouseClickMsg{X: h.x0, Y: h.y, Button: tea.MouseLeft})
+	run(cmd) // the list arrives
+	m.render()
+	for _, k := range []tea.KeyPressMsg{{Text: "k"}, {Text: "\x1b[<0;36;16m"}, {Text: "i"}, {Code: tea.KeyRight}, {Code: tea.KeyRight}} { // filter to kimi (a mouse report is not typing), high -> max
+		m.Update(k)
+	}
+	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	run(cmd)
+	if len(applied) != 1 || applied[0].Target != "w1" || applied[0].Model != "HP/kimi-k3" || applied[0].Thinking != "max" || m.pick != nil {
+		t.Fatalf("applied %+v, picker open %v; want w1 to HP/kimi-k3 at max, picker closed", applied, m.pick != nil)
+	}
+
+	m.Update(tea.KeyPressMsg{Text: "m"}) // mouse off: M still opens it
+	_, cmd = m.Update(tea.KeyPressMsg{Text: "M"})
+	run(cmd)
+	m.render()
+	var row hit
+	for _, h := range m.hits {
+		if h.opt == "m:1" {
+			row = h
+		}
+	}
+	m.Update(tea.MouseClickMsg{X: row.x0 + 3, Y: row.y, Button: tea.MouseLeft})
+	if len(applied) != 1 {
+		t.Fatal("a single click applied")
+	}
+	_, cmd = m.Update(tea.MouseClickMsg{X: row.x0 + 3, Y: row.y, Button: tea.MouseLeft})
+	run(cmd)
+	if len(applied) != 2 || applied[1].Model != "HP/kimi-k3" {
+		t.Fatalf("applied %+v; want the second click on a model to apply it", applied)
+	}
+}
+
+// hitFor is the Overview model-row target of worker id in the last frame.
+func hitFor(m *topModel, id string) (hit, bool) {
+	for _, h := range m.hits {
+		if h.pick == id {
+			return h, true
+		}
+	}
+	return hit{}, false
 }

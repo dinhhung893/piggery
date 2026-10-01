@@ -282,6 +282,37 @@ func (c *codexCodec) setModel(_ context.Context, w *worker, model string) error 
 	return c.set(w, func(r *codexRun) { r.model = model })
 }
 
+// models is app-server's model/list (its pages followed; it leaves hidden models out unless asked):
+// the `model` field of each, which turn/start takes.
+func (c *codexCodec) models(ctx context.Context, w *worker) ([]string, error) {
+	out := []string{}
+	cursor := ""
+	for page := 0; page < 20; page++ {
+		params := map[string]any{}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		res, err := w.rpc(ctx, commandTimeout, "model/list", params)
+		if err != nil {
+			return nil, err
+		}
+		var l struct {
+			Data       []struct{ Model string } `json:"data"`
+			NextCursor string                   `json:"nextCursor"`
+		}
+		if err := json.Unmarshal(res, &l); err != nil {
+			return nil, fmt.Errorf("codex model/list: %w", err)
+		}
+		for _, m := range l.Data {
+			out = append(out, m.Model)
+		}
+		if cursor = l.NextCursor; cursor == "" {
+			break
+		}
+	}
+	return out, nil
+}
+
 func (c *codexCodec) setThinking(_ context.Context, w *worker, level string) error {
 	return c.set(w, func(r *codexRun) { r.effort = level })
 }

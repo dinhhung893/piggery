@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"github.com/sting8k/piggery/internal/core"
 	"github.com/sting8k/piggery/internal/driver/local"
 	"github.com/sting8k/piggery/internal/proto"
+	"github.com/sting8k/piggery/internal/server"
+	"github.com/sting8k/piggery/internal/view"
 )
 
 // ps --json carries the text ps's grouping as "projects" (one source: the same grouping code):
@@ -100,7 +103,7 @@ func TestPsJSONMatchesTop(t *testing.T) {
 	}}
 	top := &topModel{dir: dir, ps: r, logs: readLogs(dir, r, nil)}
 	stats := top.stats()
-	if ws := stats["w"]; ws != (workerStats{ctx: 12345, hasCtx: true, turns: 2}) {
+	if ws := stats["w"]; ws != (view.Stats{Ctx: 12345, HasCtx: true, Turns: 2}) {
 		t.Fatalf("top's stats %+v", ws)
 	}
 	projects := psProjects(r, stats)
@@ -125,5 +128,90 @@ func TestPsJSONMatchesTop(t *testing.T) {
 	}
 	if want := top.items(); !slices.Equal(ids, want) {
 		t.Fatalf("projects %v, top lists %v", ids, want)
+	}
+}
+
+// ps --view is what the Paseo plugin draws from: through the real command it prints one JSON
+// document with the version the plugin checks, and every row top's list selects is in it with the
+// same id, its actions as top decides them, and its Overview.
+func TestPsViewCarriesWhatTopSelects(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "pg") // short: unix socket paths are limited on macOS
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.Run(ctx, server.Config{Dir: dir}) }()
+	defer func() { cancel(); <-done }()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if c, err := Dial(dir, false); err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("server did not come up")
+		}
+	}
+	var out, errOut bytes.Buffer
+	if code := Main(dir, []string{"ps", "--view"}, &out, &errOut); code != 0 {
+		t.Fatalf("ps --view: exit %d\n%s", code, errOut.String())
+	}
+	var got struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil || got.Version != view.Version {
+		t.Fatalf("ps --view: version %d (%v), want %d\n%s", got.Version, err, view.Version, out.String())
+	}
+
+	// a snapshot with rows: a team with a worker and a session, a solo, a closed team
+	r := proto.PsResult{State: core.State{
+		Teams: []core.TeamState{{ID: "t", Name: "shop", Root: "/w/shop", Members: []core.MemberState{
+			{ID: "lead", Name: "lead", State: "idle", Cwd: "/w/shop"},
+			{ID: "w", Name: "w", ReportsTo: "lead", State: "working", Headless: true, RunID: "r", Cwd: "/w/shop"},
+			{ID: "old", Name: "old", ReportsTo: "lead", State: "gone", Headless: true, Cwd: "/w/shop"}}}},
+		Solos:  []core.SoloState{{ID: "s", Name: "fern", Cwd: "/w/shop", State: "idle"}},
+		Closed: []core.ClosedTeam{{TeamState: core.TeamState{ID: "c", Name: "done", Root: "/w/shop", Members: []core.MemberState{{ID: "x", Name: "x", State: "gone"}}}, ClosedAt: time.Now().UnixMilli()}},
+	}}
+	top := &topModel{dir: t.TempDir(), ps: r, fold: topState{Teams: map[string]bool{}, Gone: map[string]bool{}}}
+	raw, err := json.Marshal(viewDoc(r, nil, time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		All struct {
+			Dirs []struct {
+				Blocks []struct {
+					Head *struct{ Detail string }
+					Rows []struct {
+						ID      string
+						Actions *struct{ Tail bool }
+					}
+				}
+			}
+		}
+		Details map[string]json.RawMessage
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	rows := map[string]*struct{ Tail bool }{}
+	for _, d := range doc.All.Dirs {
+		for _, b := range d.Blocks {
+			if b.Head != nil {
+				rows[b.Head.Detail] = nil
+			}
+			for _, r := range b.Rows {
+				rows[r.ID] = r.Actions
+			}
+		}
+	}
+	for _, id := range top.items() {
+		a, ok := rows[id]
+		if !ok || doc.Details[id] == nil {
+			t.Errorf("top selects %q: in ps --view rows %v, details %v", id, ok, doc.Details[id] != nil)
+		} else if a != nil && a.Tail != top.tailable(id) {
+			t.Errorf("%q: ps --view tail %v, top %v", id, a.Tail, top.tailable(id))
+		}
 	}
 }

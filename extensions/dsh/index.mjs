@@ -490,6 +490,19 @@ function splitModel(m) {
 	return i < 0 ? { provider: "", model: m } : { provider: m.slice(0, i), model: m.slice(i + 1) };
 }
 
+// Every model dsh's llm service lists, as "provider/model" (what set_model takes); a provider that
+// cannot list now (no key, offline) is left out, not an error for the rest.
+async function listModels(ctx) {
+	const llm = ctx.get("llm");
+	const out = [];
+	for (const p of llm.listProviders()) {
+		try {
+			for (const m of await llm.listModels(p.id)) out.push(`${p.id}/${m.id}`);
+		} catch {}
+	}
+	return out;
+}
+
 // The worker: create the agent under piggery's session id (or resume it), and take the driver's
 // commands. The sdk profile's own stdin reader ignores what it does not know.
 function startWorker(ctx, w, parts, rpc, log) {
@@ -533,6 +546,8 @@ function startWorker(ctx, w, parts, rpc, log) {
 				reply({ ok: false, error: "the agent is not running" });
 			} else if (m.method === "piggery/abort") {
 				part.abort();
+			} else if (m.method === "piggery/models") {
+				listModels(ctx).then((models) => reply({ ok: true, models }), (e) => reply({ ok: false, error: errorText(e) }));
 			} else if (m.method === "piggery/set_model") {
 				part.setModel(m.params?.model, m.params?.thinking).then(() => reply({ ok: true }), (e) => reply({ ok: false, error: errorText(e) }));
 			}

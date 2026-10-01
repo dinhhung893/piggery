@@ -146,6 +146,62 @@ func TestAdapterTurnAcksOnlyItsOwnEnd(t *testing.T) {
 	}
 }
 
+// A reconnect's mail check is not a turn (live 2026-10-01: every daemon restart showed an idle pi
+// session as having just ended a turn). A turn_start that only asks for mail (wake) with nothing to
+// give opens no batch and moves neither last_turn_end nor last_activity; with mail it is a turn; and
+// a turn_start without it, a turn the human typed, is a turn even with no mail.
+func TestWakeMailCheckIsNotATurn(t *testing.T) {
+	f := newFixture(t, nil)
+	const old = 1000
+	stamps := func() (lastTurnEnd, lastActivity, batches int64) {
+		t.Helper()
+		if err := f.db.QueryRow(`SELECT COALESCE(last_turn_end,0), last_activity,
+			(SELECT COUNT(*) FROM batches) FROM participants WHERE id=?`,
+			f.bob.ParticipantID).Scan(&lastTurnEnd, &lastActivity, &batches); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	reset := func() {
+		t.Helper()
+		if _, err := f.db.Exec(`UPDATE participants SET last_turn_end=?, last_activity=?, state='idle' WHERE id=?`, old, old, f.bob.ParticipantID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ev := func(a core.HarnessEventArgs) core.HarnessEventResult {
+		t.Helper()
+		r, err := f.e.HarnessEvent(ctx, f.bob, a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	reset()
+	_, _, before := stamps()
+	if r := ev(core.HarnessEventArgs{Event: core.HarnessTurnStart, PromptID: "w1", Wake: true}); r.Text != "" {
+		t.Fatalf("a wake with no mail gave %q", r.Text)
+	}
+	if lte, la, n := stamps(); lte != old || la != old || n != before {
+		t.Fatalf("after a wake with no mail: last_turn_end %d, last_activity %d, batches %d; want %d, %d, %d", lte, la, n, old, old, before)
+	}
+	// A turn the human typed: no mail and still a turn.
+	ev(core.HarnessEventArgs{Event: core.HarnessTurnStart, PromptID: "h1"})
+	ev(core.HarnessEventArgs{Event: core.HarnessTurnEnd, PromptID: "h1", Outcome: core.HarnessOutcomeOK})
+	if lte, la, _ := stamps(); lte == old || la == old {
+		t.Fatalf("a typed turn left last_turn_end %d, last_activity %d at the old value", lte, la)
+	}
+	// A wake with mail is a turn.
+	reset()
+	f.send(t, f.alice, core.SendArgs{To: "bob", Body: "hello"})
+	if r := ev(core.HarnessEventArgs{Event: core.HarnessTurnStart, PromptID: "w2", Wake: true}); !strings.Contains(r.Text, "hello") {
+		t.Fatalf("a wake with mail gave %q", r.Text)
+	}
+	ev(core.HarnessEventArgs{Event: core.HarnessTurnEnd, PromptID: "w2", Outcome: core.HarnessOutcomeOK})
+	if lte, _, _ := stamps(); lte == old {
+		t.Fatal("a wake with mail did not count as a turn")
+	}
+}
+
 // Delivery policy: while a participant waits on a permission prompt its mail and wakes are held,
 // and go out when the prompt ends (the next tool result, or the end of a pi ui prompt). An Esc
 // leaves a turn with no end: idle closes it unacked, without a wake, and new mail wakes again.

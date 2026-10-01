@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.6.0 - 2026-10-01
+
+The Paseo plugin is rebuilt on what `piggery top` shows, and a project no longer jumps around the
+list when its sessions reconnect.
+
+After upgrading, reload the Paseo app if you use its plugin (its integration is now 3; `piggery setup
+--outdated` updates it).
+
+- Paseo plugin, rebuilt: the Overview has `top`'s rows, order, state words, folds and since, one
+  line per worker with a ctx column, a header with working/idle/waiting counts, events as short
+  lines, and a dialog with a worker's details and tail. A new Board tab gives one band per project
+  and a column per status (working, idle, waiting, gone), filtered by team; projects with nothing
+  live start folded, and gone workers show on request.
+- `piggery ps --view` and `piggery tail --view` print what `top` shows as versioned JSON (rows with
+  their actions, header counts, events, Overview; tail lines with their kind). The Paseo plugin reads
+  them from the installed binary, so `top`, `ps` and the plugin always agree.
+- Projects are listed live first, then sleeping (nothing working and no real turn for over a day),
+  all gone, closed. A live project sorts by its latest real turn; a reconnect or a daemon restart
+  moves nothing.
+- An idle worker's or solo's since counts from its last real turn, not from a reconnect.
+- `piggery top`: in a live headless worker's Overview, a click on the model (blue, `▾`) or `M` opens a
+  picker of the models its harness offers, with the thinking level; `enter` or a double-click
+  applies. The footer always lists `M model`, dim where it does nothing.
+- Fix: a wake or reconnect that finds no mail is not a turn any more (no empty turn, last turn kept).
+- Fix: in `top`'s model picker, a mouse report that arrives as keys no longer types into the filter.
+- Fix: in `top`'s Overview, the last turn no longer runs into the joined/spawned value.
+
 ## v0.5.3 - 2026-09-30
 
 Big teams stay readable in `piggery top`, and a worker's piggery tool call survives a daemon restart.

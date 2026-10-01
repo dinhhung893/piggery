@@ -143,6 +143,8 @@ type SoloState struct {
 	Harness      string `json:"harness,omitempty"`
 	Model        string `json:"model,omitempty"` // as for a member: its session's report, else stored
 	LastActivity int64  `json:"last_activity"`
+	// LastTurnEnd is when its latest turn ended (unix ms), as for a member; 0 = none yet.
+	LastTurnEnd int64 `json:"last_turn_end,omitempty"`
 	// ProtocolVersion is what its adapter sent at its latest identify; nil = none yet.
 	ProtocolVersion *int `json:"protocol_version,omitempty"`
 	// Transcript is as for a member.
@@ -236,7 +238,7 @@ func (e *Engine) State(ctx context.Context, a StateArgs) (State, error) {
 		}
 
 		solos, err := t.QueryContext(t.ctx, `SELECT `+participantCols+`, cwd, created_at, COALESCE(session_model, model, ''), protocol_version,
-			transcript, transcript_format FROM participants
+			transcript, transcript_format, last_turn_end FROM participants
 			WHERE team_id IS NULL AND state<>'gone' ORDER BY created_at, rowid`)
 		if err != nil {
 			return internal(err)
@@ -244,16 +246,16 @@ func (e *Engine) State(ctx context.Context, a StateArgs) (State, error) {
 		for solos.Next() {
 			var cwd, model string
 			var created int64
-			var proto sql.NullInt64
+			var proto, turn sql.NullInt64
 			var tpath, tformat sql.NullString
-			q, err := scanParticipant(solos, &cwd, &created, &model, &proto, &tpath, &tformat)
+			q, err := scanParticipant(solos, &cwd, &created, &model, &proto, &tpath, &tformat, &turn)
 			if err != nil {
 				solos.Close()
 				return internal(err)
 			}
 			out.Solos = append(out.Solos, SoloState{ID: q.id, Name: q.name, Cwd: cwd, State: q.state,
 				StateSince: q.stateSince, Unacked: pending[q.id][0], CreatedAt: created, Harness: q.harness, Model: model,
-				LastActivity: q.lastActivity, ProtocolVersion: intOrNil(proto), Transcript: transcriptOrNil(tpath, tformat)})
+				LastActivity: q.lastActivity, LastTurnEnd: turn.Int64, ProtocolVersion: intOrNil(proto), Transcript: transcriptOrNil(tpath, tformat)})
 		}
 		solos.Close()
 		if err := solos.Err(); err != nil {

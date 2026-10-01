@@ -1,0 +1,3 @@
+{"type": "control_response", "response": {"subtype": "success", "request_id": "m1"}}
+{"type": "control_response", "response": {"subtype": "success", "request_id": "m2"}}
+{"type": "control_response", "response": {"subtype": "error", "request_id": "m3", "error": "Model 'no-such-model-zz' not found", "error_code": "catalog_unknown"}}

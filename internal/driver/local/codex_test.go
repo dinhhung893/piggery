@@ -31,6 +31,10 @@ func TestCodexHelperProcess(t *testing.T) {
 		os.Exit(3)
 	}
 	w1 := bytes.Split(bytes.TrimSpace(b), []byte("\n"))
+	modelList, err := os.ReadFile(filepath.Join(os.Getenv("PGDRV_FIXTURES"), "model-list.jsonl"))
+	if err != nil {
+		os.Exit(3)
+	}
 	emit := func(v any) {
 		b, _ := json.Marshal(v)
 		fmt.Println(string(b))
@@ -60,6 +64,8 @@ func TestCodexHelperProcess(t *testing.T) {
 			answer(w1[0], msg.ID)
 		case "thread/start":
 			answer(w1[1], msg.ID)
+		case "model/list": // app-server's own answer (codex 0.157.1)
+			answer(modelList, msg.ID)
 		case "thread/resume":
 			emit(map[string]any{"id": msg.ID, "result": map[string]any{"thread": map[string]string{"id": msg.Params.ThreadID}}})
 		case "turn/start":
@@ -196,6 +202,10 @@ func TestCodexStartAndWake(t *testing.T) {
 	waitRecord(t, d, "p1", "probe_turn")
 	if ms, in = methodsIn(t, d, "p1"); ms[2] != "thread/resume" || in[2]["params"].(map[string]any)["threadId"] != "th-9" {
 		t.Fatalf("respawn stdin %v", in)
+	}
+	// model/list: the `model` of each entry, which turn/start takes.
+	if got, err := d.Models(ctx, "p1"); err != nil || len(got) != 7 || got[0] != "gpt-6-astra" || got[6] != "gpt-5.5" {
+		t.Fatalf("models = %v, %v", got, err)
 	}
 	d.Stop(ctx, "p1")
 }

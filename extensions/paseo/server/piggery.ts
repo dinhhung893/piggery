@@ -3,7 +3,7 @@
 import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 
-export type Result = { ok: true; out: string } | { ok: false; code: "missing" | "down" | "failed"; error: string };
+export type Result = { ok: true; out: string } | { ok: false; code: "missing" | "down" | "older" | "failed"; error: string };
 
 const TIMEOUT_MS = 5000;
 
@@ -24,28 +24,14 @@ export function runPiggery(bin: string, args: string[], timeoutMs = TIMEOUT_MS):
       if (said.includes("the piggery daemon is not running")) {
         return resolve({ ok: false, code: "down", error: "The piggery daemon is not running. Any piggery command starts it, e.g. `piggery ps`." });
       }
-      if (said.includes("flag provided but not defined: -no-start")) {
-        return resolve({ ok: false, code: "failed", error: `The piggery at "${bin}" is older than this plugin (it has no --no-start). Point the Piggery setting at a newer piggery.` });
+      const flag = /flag provided but not defined: -(no-start|view)/.exec(said)?.[1];
+      if (flag) {
+        return resolve({ ok: false, code: "older", error: `The piggery at "${bin}" is older than this plugin (it has no --${flag}). Update piggery, or point the Piggery setting at a newer one.` });
       }
       if (err.killed) return resolve({ ok: false, code: "failed", error: `piggery did not answer within ${timeoutMs / 1000}s.` });
       resolve({ ok: false, code: "failed", error: said || err.message });
     });
   });
-}
-
-/**
- * The notice for installs that need `piggery setup --outdated`, from the `outdated` list of
- * `piggery ps --json` (the daemon reads it from files on each call, so nothing is spawned here):
- * "outdated: codex (v0 < v1): piggery setup --outdated", or "" when the list is absent or empty.
- * The text is what `piggery ps` prints.
- */
-export function outdatedNotice(ps: Record<string, unknown>): string {
-  const list = Array.isArray(ps.outdated) ? ps.outdated : [];
-  const what = list.flatMap((o: { name?: unknown; have?: unknown; want?: unknown; drift?: unknown }) => {
-    if (typeof o?.name !== "string" || typeof o.have !== "number" || typeof o.want !== "number") return [];
-    return [`${o.name} (${o.have < o.want ? `v${o.have} < v${o.want}` : `v${o.have}: ${String(o.drift ?? "")}`})`];
-  });
-  return what.length ? `outdated: ${what.join(", ")}: piggery setup --outdated` : "";
 }
 
 /** A directory as piggery records it, symlinks resolved; as given when it cannot be resolved. */

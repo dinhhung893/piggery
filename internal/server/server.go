@@ -433,7 +433,7 @@ func (s *server) handle(ctx context.Context, cn *conn, req proto.Request) proto.
 		// of an open team. The socket's 0600 mode is the boundary.
 		return call(req, func(a core.JoinAutoArgs) (any, error) { return s.eng.JoinAuto(ctx, a) })
 	case proto.VerbTeamUp, proto.VerbJoin, proto.VerbLog, proto.VerbRelease,
-		proto.VerbWhy, proto.VerbDoctor, proto.VerbLabels, proto.VerbTeamDown, proto.VerbGC, proto.VerbPs, proto.VerbTail, proto.VerbShutdown, proto.VerbAbort, proto.VerbKill, proto.VerbResume, proto.VerbModel:
+		proto.VerbWhy, proto.VerbDoctor, proto.VerbLabels, proto.VerbTeamDown, proto.VerbGC, proto.VerbPs, proto.VerbTail, proto.VerbShutdown, proto.VerbAbort, proto.VerbKill, proto.VerbResume, proto.VerbModel, proto.VerbModels:
 		if !s.isAdmin(req.AdminToken) {
 			return errResponse(req.ID, s.unauthorized(req.Verb, "admin token required"))
 		}
@@ -465,6 +465,8 @@ func (s *server) handle(ctx context.Context, cn *conn, req proto.Request) proto.
 			return call(req, func(a core.AdminTarget) (any, error) { return s.eng.Resume(ctx, a) })
 		case proto.VerbModel:
 			return call(req, func(a core.ModelArgs) (any, error) { return s.eng.SetModel(ctx, a) })
+		case proto.VerbModels:
+			return call(req, func(a core.AdminTarget) (any, error) { return s.eng.Models(ctx, a) })
 		case proto.VerbTail:
 			return call(req, func(a core.WorkerLogArgs) (any, error) {
 				w, err := s.eng.WorkerLog(ctx, a)

@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 
-/** ps --json reads the workers' logs for ctx and turns, so ask no more often than this. */
-const REFRESH_MS = 5000;
+/** ps --view reads the workers' logs for ctx and turns: ask this often while something works or waits ... */
+export const BUSY_MS = 5000;
+/** ... and this often otherwise. */
+export const QUIET_MS = 30000;
+
+/** How long ago a read may be, beyond the poll interval, before it counts as overdue: the call itself takes time. */
+export const GRACE_MS = 3000;
+
+/** How often ps --view is asked for: soon while something works or waits, else rarely. */
+export const pollEvery = (busy: boolean) => (busy ? BUSY_MS : QUIET_MS);
 
 /** The web app's page; a native app has none. */
 type Page = { visibilityState: string; addEventListener(type: string, fn: () => void): void; removeEventListener(type: string, fn: () => void): void };
@@ -12,36 +20,39 @@ function hidden(): boolean {
   return page?.visibilityState === "hidden";
 }
 
-export type Loaded<T> = { value: T | null; error: string | null };
+export type Failed = { code: string; message: string };
+export type Loaded<T> = { value: T | null; error: Failed | null; /** When the value was read (ms), null before the first read. */ at: number | null };
 
 /**
- * Calls `load` now and every REFRESH_MS while mounted and the page is shown (a hidden page skips,
- * and asks at once when shown again); keeps the last good value across a failure.
+ * Calls `load` now and again after `every(value)` ms while mounted and the page is shown (a hidden
+ * page skips, and asks at once when shown again); keeps the last good value across a failure.
  */
-export function usePoll<T>(load: () => Promise<{ ok: true; value: T } | { ok: false; error: string }>, key: string): Loaded<T> {
-  const [state, setState] = useState<Loaded<T>>({ value: null, error: null });
+export function usePoll<T>(load: () => Promise<{ ok: true; value: T } | { ok: false; code: string; error: string }>, key: string, every: (value: T | null) => number): Loaded<T> {
+  const [state, setState] = useState<Loaded<T>>({ value: null, error: null, at: null });
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let last: T | null = null;
+    const again = () => {
+      if (live) timer = setTimeout(tick, hidden() ? QUIET_MS : every(last));
+    };
     const tick = async () => {
-      if (hidden()) {
-        timer = setTimeout(tick, REFRESH_MS);
-        return;
-      }
+      if (hidden()) return again();
       try {
         const r = await load();
-        if (live) setState((s) => (r.ok ? { value: r.value, error: null } : { value: s.value, error: r.error }));
+        if (r.ok) last = r.value;
+        if (live) setState((s) => (r.ok ? { value: r.value, error: null, at: Date.now() } : { ...s, error: { code: r.code, message: r.error } }));
       } catch (error) {
-        if (live) setState((s) => ({ value: s.value, error: String(error) }));
+        if (live) setState((s) => ({ ...s, error: { code: "failed", message: String(error) } }));
       }
-      if (live) timer = setTimeout(tick, REFRESH_MS);
+      again();
     };
     const shown = () => {
       if (hidden() || !live) return;
       clearTimeout(timer);
       void tick();
     };
-    setState({ value: null, error: null });
+    setState({ value: null, error: null, at: null });
     void tick();
     page?.addEventListener("visibilitychange", shown);
     return () => {
@@ -55,23 +66,12 @@ export function usePoll<T>(load: () => Promise<{ ok: true; value: T } | { ok: fa
   return state;
 }
 
-/** An event's local time, as top: 15:04:05 today, 01-02 15:04 on an earlier day; "" when unknown. */
-export function clock(ms: number | undefined): string {
-  if (!ms) return "";
-  const t = new Date(ms);
-  const now = new Date();
-  const two = (n: number) => String(n).padStart(2, "0");
-  const time = `${two(t.getHours())}:${two(t.getMinutes())}`;
-  if (t.toDateString() === now.toDateString()) return `${time}:${two(t.getSeconds())}`;
-  return `${two(t.getMonth() + 1)}-${two(t.getDate())} ${time}`;
-}
-
-/** Time since `ms` in one unit: 12s, 4m, 3h, 2d; "" when unknown. */
-export function ago(ms: number | undefined): string {
-  if (!ms) return "";
-  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
+/** The clock, ticking every `ms`, for ages that are drawn from a time and not from piggery's own words. */
+export function useNow(ms: number): number {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+  return now;
 }

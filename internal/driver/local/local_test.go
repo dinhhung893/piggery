@@ -94,6 +94,12 @@ func TestHelperProcess(t *testing.T) {
 			case "get_state":
 				emit(map[string]any{"type": "response", "id": cmd.ID, "command": cmd.Type, "success": true,
 					"data": map[string]any{"thinkingLevel": level}})
+			case "get_available_models": // pi's own answer (pi 0.99.1), under this request's id
+				b, _ := os.ReadFile(os.Getenv("PGDRV_PI_MODELS"))
+				var resp map[string]any
+				json.Unmarshal(b, &resp)
+				resp["id"] = cmd.ID
+				emit(resp)
 			}
 		}
 		os.Exit(0)
@@ -339,6 +345,31 @@ func TestThinkingLevelIsChecked(t *testing.T) {
 		t.Fatalf("after the refused set pi runs %q, %v; want low back", ran, err)
 	}
 	d.Stop(ctx, "p6")
+}
+
+// get_available_models is listed as provider/id, the form set_model takes, in pi's order; the
+// driver declares the capability; a worker that is not running has no list.
+func TestModelsAreListed(t *testing.T) {
+	d, dir := newDriver(t, "rpc", Options{})
+	ctx := context.Background()
+	capture, err := filepath.Abs("../../../testdata/fixtures/pi-0.99.1-get-available-models.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PGDRV_PI_MODELS", capture)
+	if !slices.Contains(d.Capabilities(), core.CapListModels) {
+		t.Fatal("pi's driver does not declare list_models")
+	}
+	if _, err := d.Start(ctx, core.Spec{ParticipantID: "p8", RunID: "r8", Token: "tok", Cwd: dir, HarnessRef: "sess-8"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := d.Models(ctx, "p8"); err != nil || !slices.Equal(got, []string{"example/glm-5.3-flash", "example/glm-5.3-pro"}) {
+		t.Fatalf("models = %v, %v", got, err)
+	}
+	d.Stop(ctx, "p8")
+	if _, err := d.Models(ctx, "p8"); !errors.Is(err, core.ErrNotRunning) {
+		t.Fatalf("models of a stopped worker: %v; want ErrNotRunning", err)
+	}
 }
 
 // abort and set_model each write one JSON line on stdin (under the stdin lock); set_model

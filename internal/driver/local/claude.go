@@ -641,6 +641,21 @@ func (c *claudeCodec) setModel(ctx context.Context, w *worker, model string) err
 	return nil
 }
 
+// models are the values initialize listed for the run (what set_model takes; no extra call).
+func (c *claudeCodec) models(_ context.Context, w *worker) ([]string, error) {
+	r := c.run(w)
+	if r == nil {
+		return nil, core.ErrNotRunning
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.models))
+	for _, m := range r.models {
+		out = append(out, m.Value)
+	}
+	return out, nil
+}
+
 // setThinking sets the effort level for the next turn, refusing a level the run's model does
 // not run (Claude would run a lower one without saying).
 func (c *claudeCodec) setThinking(ctx context.Context, w *worker, level string) error {

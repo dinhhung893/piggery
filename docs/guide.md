@@ -56,7 +56,7 @@ editing it changes the next team only.
 
 ```sh
 piggery ps                    # teams, members and solo sessions by project, once
-piggery top                   # the same, live, with context, turns and latest events (enter folds a team)
+piggery top                   # the same, live, with context, turns and latest events (enter folds a team; click a worker's model to change it)
 piggery tail w1 -n 50 -f      # a worker's log (or a session's transcript), readable; -f follows
 piggery abort w1              # cancel its current turn (like Esc); it stays alive
 piggery model w1 HP/kimi-k3   # its model from the next turn; --thinking high for the level

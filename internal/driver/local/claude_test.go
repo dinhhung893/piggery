@@ -255,6 +255,10 @@ func TestClaudeEffortIsChecked(t *testing.T) {
 	if err := d.SetThinking(ctx, "p4", "xhigh"); err == nil {
 		t.Fatal("set xhigh on opus 4.6: want refused")
 	}
+	// The list is what initialize gave (no control request of its own): the values set_model takes.
+	if got, err := d.Models(ctx, "p4"); err != nil || got[0] != "default" || !slices.Contains(got, "claude-opus-5") {
+		t.Fatalf("models = %v, %v", got, err)
+	}
 	if err := d.SetModel(ctx, "p4", "claude-opus-5"); err != nil {
 		t.Fatal(err)
 	}

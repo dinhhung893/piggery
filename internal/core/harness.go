@@ -51,6 +51,14 @@ func (e *Engine) HarnessEvent(ctx context.Context, c Caller, a HarnessEventArgs)
 			}
 			return nil
 		case HarnessTurnStart:
+			if a.Wake {
+				// A wake or a reconnect asks for mail, and the model has not run: with nothing to give
+				// (read elsewhere, or none) there is no turn, so no batch, no working state, and no
+				// last_turn_end. A turn the adapter already opened under this key goes on as one.
+				if quiet, err := t.nothingToGive(p, a.PromptID); err != nil || quiet {
+					return err
+				}
+			}
 			n, err := t.openTurn(p, a.PromptID)
 			if err != nil {
 				return err
@@ -164,6 +172,21 @@ func (t *txn) openTurn(p participant, promptID string) (int64, error) {
 		return 0, internal(err)
 	}
 	return n, nil
+}
+
+// nothingToGive: p has no mail waiting, no role card due, and no open turn under promptID.
+func (t *txn) nothingToGive(p participant, promptID string) (bool, error) {
+	if b, ok, err := t.openTurnBatch(p); err != nil || (ok && b.promptID == promptID) {
+		return false, err
+	}
+	if k, err := t.pendingMail(p, 0); err != nil || k > 0 {
+		return false, err
+	}
+	var seen, caps sql.NullString
+	if err := t.QueryRowContext(t.ctx, `SELECT card_hash, capabilities FROM participants WHERE id=?`, p.id).Scan(&seen, &caps); err != nil {
+		return false, internal(err)
+	}
+	return cardKey(p) == seen.String || !caps.Valid || !lacksCap(caps, CapSystemPrompt), nil
 }
 
 // newCard puts p's role card before res.Text when it changed since p's session last got one (found,

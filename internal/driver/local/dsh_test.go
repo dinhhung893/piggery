@@ -62,6 +62,9 @@ func TestDshHelperProcess(t *testing.T) {
 			Params struct{ ID, Model string }
 		}
 		json.Unmarshal(in.Bytes(), &m)
+		if m.Method == "piggery/models" {
+			emit(map[string]any{"jsonrpc": "2.0", "method": "piggery/result", "params": map[string]any{"id": m.Params.ID, "ok": true, "models": []string{"hp/glm-5.3-flash", "deepseek-official/deepseek-flash"}}})
+		}
 		if m.Method == "piggery/set_model" {
 			ok := !strings.HasPrefix(m.Params.Model, "bad/")
 			emit(map[string]any{"jsonrpc": "2.0", "method": "piggery/result", "params": map[string]any{"id": m.Params.ID, "ok": ok, "error": map[bool]string{false: "no such model"}[ok]}})
@@ -216,6 +219,9 @@ func TestDshControl(t *testing.T) {
 	if len(lines) != 4 || lines[0] != `{"jsonrpc":"2.0","method":"piggery/abort"}` ||
 		!strings.Contains(lines[1], `"model":"hp/glm-5.3"`) || !strings.Contains(lines[2], `"thinking":"high"`) || strings.Contains(lines[2], `"model"`) {
 		t.Fatalf("stdin lines %q", lines)
+	}
+	if got, err := d.Models(ctx, "p1"); err != nil || !slices.Equal(got, []string{"hp/glm-5.3-flash", "deepseek-official/deepseek-flash"}) {
+		t.Fatalf("models = %v, %v", got, err)
 	}
 }
 

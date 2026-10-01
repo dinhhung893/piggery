@@ -126,8 +126,8 @@ export class Turns {
 
 	/**
 	 * The daemon's wake push (or a reconnect): mail for this session. Running: steer it in at once.
-	 * Idle: open a turn for it; its text starts a new pi turn, which keeps this key. No mail left
-	 * (read elsewhere): end that turn, nothing acked.
+	 * Idle: ask for a turn for it; its text starts a new pi turn, which keeps this key. No mail left
+	 * (read elsewhere): no turn was opened, nothing is ended.
 	 */
 	wake() {
 		return this.enqueue(async () => {
@@ -138,11 +138,15 @@ export class Turns {
 				else this.held = true;
 				return;
 			}
+			// A mail check: the daemon opens a turn only when it has something to give, so no mail is
+			// no turn (a reconnect must not look like one). A key from an earlier wake is a turn it
+			// opened: that one is ended.
+			const fresh = !this.key;
 			const key = (this.key ??= this.io.newKey());
-			const r = await this.give({ event: "turn_start", prompt_id: key }, false);
+			const r = await this.give({ event: "turn_start", prompt_id: key, wake: true }, false);
 			if (!r?.text && !this.running && this.key === key) {
 				this.key = null;
-				await this.io.event({ event: "turn_end", prompt_id: key, outcome: "interrupted" });
+				if (!fresh) await this.io.event({ event: "turn_end", prompt_id: key, outcome: "interrupted" });
 			}
 		});
 	}

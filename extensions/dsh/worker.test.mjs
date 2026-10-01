@@ -1,6 +1,7 @@
 // The plugin as piggery's worker (`dsh --profile sdk`): its own process, since the plugin keeps
 // per-process state and reads what the driver put in the environment when it loads.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { events } from "./replay.mjs";
 import { fakeAgent, fakeCtx, fakeDaemon, tempHome, until } from "./fake.mjs";
@@ -23,7 +24,13 @@ test("a worker: creates its agent under piggery's session id, is that participan
 	t.after(() => daemon.close());
 
 	const resolved = [];
+	const listed = JSON.parse(readFileSync(new URL("../../testdata/fixtures/dsh/0.2.0-rc.1/llm-models.json", import.meta.url))); // dsh's llm service, as captured
 	const llm = {
+		listProviders: () => listed.providers,
+		listModels: async (p) => {
+			if (p === "deepseek-account") throw new Error("no key");
+			return listed.models[p];
+		},
 		resolveCallConfig: async (c) => {
 			if (c.model === "bad") throw new Error("no adapter for bad");
 			resolved.push(c);
@@ -91,6 +98,12 @@ test("a worker: creates its agent under piggery's session id, is that participan
 		send("piggery/set_model", { id: "piggery-3", thinking: "" }); // only the level: cleared, the model stays
 		await until(() => out.some((m) => m.params?.id === "piggery-3"));
 		assert.deepEqual(await fn({ agent }, async () => ({ provider: "hp", model: "glm-5.3-flash", reasoningEffort: "high" })), { provider: "hp", model: "kimi-k3" });
+	});
+
+	await t.test("models: every provider's models as provider/model, one that cannot list is left out", async () => {
+		send("piggery/models", { id: "piggery-4" });
+		await until(() => out.some((m) => m.params?.id === "piggery-4"));
+		assert.deepEqual(out.find((m) => m.params.id === "piggery-4").params, { id: "piggery-4", ok: true, models: ["deepseek-official/deepseek-flash", "deepseek-official/deepseek-v4-pro", "example/glm-5.3-flash"] });
 	});
 
 	await t.test("its records are the stdout the driver logs", async () => {

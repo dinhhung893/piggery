@@ -21,6 +21,9 @@ type RuntimeDriver interface {
 	Abort(participantID string) error
 	// SetModel switches the live worker's model and reports whether the harness accepted it.
 	SetModel(ctx context.Context, participantID, model string) error
+	// Models lists the models the live worker's harness offers, each as SetModel takes it, in the
+	// order the harness gives them; only for a driver that declares CapListModels.
+	Models(ctx context.Context, participantID string) ([]string, error)
 	// SetThinking sets the live worker's thinking level and reports whether the harness runs it.
 	SetThinking(ctx context.Context, participantID, level string) error
 	// Kill ends the live worker's process group at once (SIGKILL) and reports the exit.

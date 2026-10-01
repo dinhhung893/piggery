@@ -20,6 +20,7 @@ import (
 	"github.com/sting8k/piggery/internal/driver/local"
 	"github.com/sting8k/piggery/internal/proto"
 	"github.com/sting8k/piggery/internal/server"
+	"github.com/sting8k/piggery/internal/view"
 )
 
 // top is the live view: the ps rows refreshed every second, the latest
@@ -56,6 +57,25 @@ func (e *env) top(args []string) error {
 		defer kc.Close()
 		_, err = kc.CallInto(proto.VerbKill, core.AdminTarget{Target: id}, &core.AgentResult{})
 		return err
+	}
+	own := func(f func(c *Client) error) error { // its own connection: the model's is busy with the next fetch
+		kc, err := e.connect()
+		if err != nil {
+			return err
+		}
+		defer kc.Close()
+		return f(kc)
+	}
+	tm.listModels = func(id string) (models []string, err error) {
+		var r core.ModelsResult
+		err = own(func(c *Client) error {
+			_, err := c.CallInto(proto.VerbModels, core.AdminTarget{Target: id}, &r)
+			return err
+		})
+		return r.Models, err
+	}
+	tm.setModel = func(a core.ModelArgs) error {
+		return own(func(c *Client) error { _, err := c.CallInto(proto.VerbModel, a, &core.ModelResult{}); return err })
 	}
 	m, err := tea.NewProgram(tm, tea.WithOutput(f)).Run()
 	if err != nil {
@@ -98,6 +118,16 @@ type topModel struct {
 	kill     func(id string) error // kills a worker (the same verb as `piggery kill`, on a connection of its own)
 	killing  killAsk               // the worker `x` asked about, until y or another key
 	killNote string                // the answer to the last `x`, until the next key
+
+	pick       *modelPicker                      // the open model picker (toppicker.go)
+	hover      string                            // the worker whose Overview model row the mouse is on
+	modelRow   int                               // the Overview line of the model row that opens the picker, -1 when there is none (set while drawing)
+	modelOf    string                            // ... and its worker
+	modelW     int                               // ... and the width of its value
+	listModels func(id string) ([]string, error) // asks the daemon for the models a worker's harness accepts, on a connection of its own
+	setModel   func(core.ModelArgs) error        // applies a model and thinking level (the verb `model`), on a connection of its own
+	still      bool                              // the last message changed nothing drawn (the mouse moved within one target): View keeps the last frame
+	frame      string                            // the last frame drawn
 }
 
 // killAsk is the worker `x` is asking to kill.
@@ -110,10 +140,9 @@ type killed struct {
 }
 
 const (
-	tabClosed    = "\x00closed" // not a team id
-	closedRow    = "\x00team:"  // + team id: the selectable line of a team (a live one, or listed as one line)
-	goneRow      = "\x00gone:"  // + team id: the selectable line of a team's folded gone members
-	closedRecent = time.Hour    // All shows teams closed this recently
+	tabClosed    = view.TabClosed // not a team id
+	closedRow    = view.TeamRow   // + team id: the selectable line of a team (a live one, or listed as one line)
+	goneRow      = view.GoneRow   // + team id: the selectable line of a team's folded gone members
 	sideOverview = 0
 	sideTail     = 1
 )
@@ -124,7 +153,7 @@ func newTopModel(c *Client, dir string) *topModel {
 	h.ShortSeparator = "   "
 	// Its first read starts from what ps --json last read (logcache.go), not from the start of each log.
 	fold := loadTopState(dir)
-	return &topModel{c: c, dir: dir, side: true, events: fold.Events, mouse: true, fold: fold, keys: newTopKeys(), help: h,
+	return &topModel{c: c, dir: dir, modelRow: -1, side: true, events: fold.Events, mouse: true, fold: fold, keys: newTopKeys(), help: h,
 		cols: server.DisplayColumns, logs: loadLogCache(dir)}
 }
 
@@ -132,7 +161,8 @@ func newTopModel(c *Client, dir string) *topModel {
 type topKeys struct {
 	Next, Prev, Up, Down, Preview, Pane, Close, Events, Mouse, Kill, Help, Quit key.Binding
 	PgUp, PgDown, Home, End                                                     key.Binding // ? only
-	mouseOn                                                                     bool        // what the m entry says
+	Model                                                                       key.Binding
+	mouseOn                                                                     bool // what the m entry says
 }
 
 func newTopKeys() topKeys {
@@ -150,6 +180,7 @@ func newTopKeys() topKeys {
 		Events:  b([]string{"e"}, "e", "events"),
 		Mouse:   b([]string{"m"}, "m", "mouse"),
 		Kill:    b([]string{"x"}, "x", "kill worker"),
+		Model:   b([]string{"M"}, "M", "model"),
 		Help:    b([]string{"?"}, "?", "help"),
 		Quit:    b([]string{"q", "ctrl+c"}, "q", "quit"),
 		mouseOn: true,
@@ -173,7 +204,7 @@ func (k topKeys) act() []key.Binding {
 	mouse := key.NewBinding(key.WithKeys("m"), key.WithHelp("m", fmt.Sprintf("%-9s", "mouse "+onOff(k.mouseOn))))
 	all := key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "all keys"))
 	kill := key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "kill"))
-	return []key.Binding{kill, k.Events, mouse, all, k.Quit}
+	return []key.Binding{kill, k.Model, k.Events, mouse, all, k.Quit} // M next to x: the footer drops entries from the end, and these two are the actions on a worker
 }
 
 func onOff(on bool) string {
@@ -185,7 +216,7 @@ func onOff(on bool) string {
 
 func (k topKeys) FullHelp() [][]key.Binding {
 	k.Mouse.SetHelp("m", "mouse "+onOff(k.mouseOn)+" (off: select text)")
-	return [][]key.Binding{{k.Next, k.Prev}, {k.Down, k.PgUp, k.Home}, {k.Preview, k.Pane, k.Close}, {k.Events, k.Mouse, k.Kill, k.Help, k.Quit}}
+	return [][]key.Binding{{k.Next, k.Prev}, {k.Down, k.PgUp, k.Home}, {k.Preview, k.Pane, k.Close}, {k.Events, k.Mouse, k.Kill, k.Model, k.Help, k.Quit}}
 }
 
 // tailState follows one log incrementally: a worker's run log or a session's transcript.
@@ -207,14 +238,6 @@ type logState struct {
 	mark   string           // mark() of the bytes before off: a rewritten file is read again
 	reader transcriptReader // the file's reader, kept so its state follows off
 	state  json.RawMessage  // a resumable reader's saved state, until reader is made from it
-}
-
-// workerStats is a worker's context now (its current run) and turns over its whole life (all
-// its runs). Read from the driver's logs on the CLI side: no DB column, no event.
-type workerStats struct {
-	ctx    int
-	hasCtx bool
-	turns  int
 }
 
 type fetched struct {
@@ -282,7 +305,29 @@ func (m *topModel) fetch() tea.Cmd {
 }
 
 func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.still = false
 	switch msg := msg.(type) {
+	case tea.MouseMotionMsg: // hover: only a change of target draws again
+		h, ok := m.at(msg.X, msg.Y)
+		hover := ""
+		if ok && m.pick == nil {
+			hover = h.pick
+		}
+		m.still = hover == m.hover
+		m.hover = hover
+	case modelsLoaded:
+		if m.pick != nil && m.pick.id == msg.id {
+			m.pick.loaded(msg)
+		}
+	case modelApplied:
+		if p := m.pick; p != nil && p.id == msg.id {
+			p.busy = false
+			if msg.err != nil {
+				p.note = msg.err.Error()
+			} else {
+				m.pick = nil
+			}
+		}
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 	case killed:
@@ -291,6 +336,9 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.killNote = "kill " + msg.name + ": " + msg.err.Error()
 		}
 	case tea.KeyPressMsg:
+		if m.pick != nil {
+			return m, m.pickKey(msg)
+		}
 		k := m.keys
 		if ask := m.killing; ask.id != "" { // asked once: y kills, any other key cancels
 			m.killing = killAsk{}
@@ -304,6 +352,10 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, k.Kill):
 			m.askKill()
+		case key.Matches(msg, k.Model): // the picker without the mouse, for the selected worker when its model can change
+			if mem, team := m.selMember(); mem != nil && view.Pickable(*mem, team.ID, m.ps.Closed) {
+				return m, m.openPicker(*mem)
+			}
 		case key.Matches(msg, k.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, k.Next):
@@ -347,9 +399,21 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
-			m.click(msg.X, msg.Y)
+			if m.pick != nil {
+				return m, m.pickClick(msg.X, msg.Y)
+			}
+			return m, m.click(msg.X, msg.Y)
 		}
 	case tea.MouseWheelMsg:
+		if m.pick != nil {
+			switch msg.Button {
+			case tea.MouseWheelUp:
+				m.pick.move(-1)
+			case tea.MouseWheelDown:
+				m.pick.move(1)
+			}
+			return m, nil
+		}
 		if h, ok := m.at(msg.X, msg.Y); ok && h.list {
 			switch msg.Button {
 			case tea.MouseWheelUp:
@@ -393,7 +457,7 @@ func readLogs(dir string, ps proto.PsResult, prev map[string]logState) map[strin
 	}
 	for _, t := range teamsOf(ps) {
 		for _, mem := range t.Members {
-			if !logged(mem) {
+			if !view.Logged(mem) {
 				session(mem.Transcript)
 				continue
 			}
@@ -438,14 +502,14 @@ func contextSize(rec []byte) (int, bool) {
 
 // stats is each headless worker's context (current run) and turns (all runs), and each session's
 // from its transcript; none for a participant with no log read.
-func (m *topModel) stats() map[string]workerStats {
-	out := map[string]workerStats{}
+func (m *topModel) stats() map[string]view.Stats {
+	out := map[string]view.Stats{}
 	session := func(id string, t *core.Transcript) {
 		if _, ok := sessionReader(t); !ok {
 			return
 		}
 		if st, ok := m.logs[t.Path]; ok {
-			out[id] = workerStats{ctx: st.tokens, hasCtx: st.seen, turns: st.turns}
+			out[id] = view.Stats{Ctx: st.tokens, HasCtx: st.seen, Turns: st.turns}
 		}
 	}
 	for _, s := range m.ps.Solos {
@@ -453,20 +517,20 @@ func (m *topModel) stats() map[string]workerStats {
 	}
 	for _, t := range teamsOf(m.ps) {
 		for _, mem := range t.Members {
-			if !logged(mem) {
+			if !view.Logged(mem) {
 				session(mem.ID, mem.Transcript)
 				continue
 			}
-			var ws workerStats
+			var ws view.Stats
 			current := local.LogPath(m.dir, mem.ID, mem.RunID)
 			prefix := filepath.Dir(current) + string(filepath.Separator)
 			for path, st := range m.logs {
 				if !strings.HasPrefix(path, prefix) {
 					continue
 				}
-				ws.turns += st.turns
+				ws.Turns += st.turns
 				if path == current && st.seen {
-					ws.ctx, ws.hasCtx = st.tokens, true
+					ws.Ctx, ws.HasCtx = st.tokens, true
 				}
 			}
 			out[mem.ID] = ws
@@ -475,83 +539,15 @@ func (m *topModel) stats() map[string]workerStats {
 	return out
 }
 
-// topTab is one tab: All (key ""), a team (its id), or Closed; count is its rows.
-type topTab struct {
-	key, label string
-	count      int
-}
-
-// tabs are All, then one per team, then Closed (teams gc has not removed) last; solos are only in
-// All, under their directory. With only one group besides All, All is the only one (and no tab bar is drawn).
-func (m *topModel) tabs() []topTab {
-	all := topTab{label: "All", count: len(m.ps.Solos)}
-	for _, t := range m.ps.Teams {
-		if dead(t) {
-			all.count++ // one line
-		} else {
-			all.count += len(t.Members)
-		}
-	}
-	now := time.Now()
-	for _, c := range m.ps.Closed {
-		if recent(c, now) {
-			all.count++
-		}
-	}
-	out := []topTab{all}
-	for _, t := range m.ps.Teams {
-		out = append(out, topTab{key: t.ID, label: t.Name, count: len(t.Members)})
-	}
-	if len(m.ps.Closed) > 0 {
-		out = append(out, topTab{key: tabClosed, label: "Closed", count: len(m.ps.Closed)})
-	}
-	if len(out) < 3 { // one group besides All: All shows it all, no tab bar
-		return out[:1]
-	}
-	return out
-}
-
-// dead: an open team whose members are all gone. All lists it as one line, like a closed team;
-// its own tab lists its members.
-func dead(t core.TeamState) bool {
-	for _, mem := range t.Members {
-		if mem.State != "gone" {
-			return false
-		}
-	}
-	return len(t.Members) > 0
-}
-
-// oneLine reports whether the current tab lists u as one line (closedRow + its team id), its
-// members only when expanded: a closed team, or in All a dead open team.
-func (m *topModel) oneLine(u unit) bool {
-	return u.closed != nil || u.team != nil && m.tab == "" && dead(*u.team)
-}
-
-// teamOpen reports whether team id lists its members: the user's choice, else def.
-func (m *topModel) teamOpen(id string, def bool) bool {
-	if v, ok := m.fold.Teams[id]; ok {
-		return v
-	}
-	return def
-}
-
-// teamOpenByDefault: a live team is open; a dead or closed one is one line until opened.
-func (m *topModel) teamOpenByDefault(id string) bool {
-	for _, t := range m.ps.Teams {
-		if t.ID == id {
-			return !dead(t)
-		}
-	}
-	return false
-}
+// tabs are All, then one per team, then Closed last (view.Tabs).
+func (m *topModel) tabs() []view.Tab { return view.Tabs(m.ps.State, time.Now()) }
 
 // toggleRow opens or closes what the row id stands for (a team's line, or its gone members' line)
 // and remembers it; false when id is neither.
 func (m *topModel) toggleRow(id string) bool {
 	if team, ok := strings.CutPrefix(id, closedRow); ok {
-		def := m.teamOpenByDefault(team)
-		if open := !m.teamOpen(team, def); open == def {
+		def := view.OpenByDefault(m.ps.State, team)
+		if open := !view.IsOpen(m.fold.Teams, team, def); open == def {
 			delete(m.fold.Teams, team) // only a choice that differs from the default is remembered
 		} else {
 			m.fold.Teams[team] = open
@@ -569,43 +565,6 @@ func (m *topModel) toggleRow(id string) bool {
 	return true
 }
 
-// teamView is what a live team lists of its members: their tree rows, and the gone members it
-// folds into one line after them (none: no such line). With the line expanded the gone members
-// are in rows, in their place in the tree.
-type teamView struct {
-	rows []treeRow
-	gone []core.MemberState
-	open bool // the fold line is expanded
-}
-
-func (m *topModel) membersOf(t core.TeamState) teamView {
-	kept, gone := foldGone(t.Members)
-	switch {
-	case len(gone) == 0 || dead(t): // a dead team lists every member: its line is the fold
-		return teamView{rows: memberTree(t.Members)}
-	case m.fold.Gone[t.ID]:
-		return teamView{rows: memberTree(t.Members), gone: gone, open: true}
-	}
-	return teamView{rows: memberTree(kept), gone: gone}
-}
-
-// recent reports whether c closed within closedRecent of now (All lists it).
-func recent(c core.ClosedTeam, now time.Time) bool {
-	return now.Sub(time.UnixMilli(c.ClosedAt)) < closedRecent
-}
-
-// closedIn is the closed teams the current tab lists: the recent ones in All, all in Closed.
-func (m *topModel) closedIn() []core.ClosedTeam {
-	var out []core.ClosedTeam
-	now := time.Now()
-	for _, c := range m.ps.Closed {
-		if m.tab == tabClosed || m.tab == "" && recent(c, now) {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
 // teamsOf is every team of the snapshot, open then closed (logs, names, lookups).
 func teamsOf(ps proto.PsResult) []core.TeamState {
 	out := slices.Clone(ps.Teams)
@@ -620,77 +579,29 @@ func (m *topModel) switchTab(d int) {
 	tabs := m.tabs()
 	i := 0
 	for j, t := range tabs {
-		if t.key == m.tab {
+		if t.Key == m.tab {
 			i = j
 		}
 	}
-	m.tab = tabs[(i+d+len(tabs))%len(tabs)].key
+	m.tab = tabs[(i+d+len(tabs))%len(tabs)].Key
 	m.keepSel()
 }
 
-// groups is what the current tab lists, by project directory (groupByDir): All every open team,
-// the recent closed ones and the solos; a team's tab that team; Closed every closed team.
-func (m *topModel) groups() []dirGroup {
-	var teams []core.TeamState
-	for _, t := range m.ps.Teams {
-		if m.tab == "" || m.tab == t.ID {
-			teams = append(teams, t)
-		}
-	}
-	var solos []core.SoloState
-	if m.tab == "" {
-		solos = m.ps.Solos
-	}
-	var roots []string
-	for _, t := range teamsOf(m.ps) {
-		roots = append(roots, t.Root)
-	}
-	return groupByDir(teams, m.closedIn(), solos, roots)
+// listOf is what the current tab lists (view.BuildList): the folds are the user's (m.fold), stats
+// the logs read so far (nil where only the ids are wanted).
+func (m *topModel) listOf(stats map[string]view.Stats, now time.Time) view.List {
+	return view.BuildList(view.ListInput{State: m.ps.State, Tab: m.tab, Now: now, Open: m.fold.Teams, Gone: m.fold.Gone, Stats: stats})
 }
 
-// items are the selectable ids of the current tab, in display order (list): per directory and
-// unit, a team's line (in All) and its members as their tree when it is open, then the line of
-// its folded gone members; the line of a closed or dead team (then its members when expanded); a solo.
-func (m *topModel) items() []string {
-	var ids []string
-	for _, g := range m.groups() {
-		for _, u := range g.units {
-			switch {
-			case u.solo != nil:
-				ids = append(ids, u.solo.ID)
-			case m.oneLine(u):
-				ids = append(ids, closedRow+u.team.ID)
-				if m.teamOpen(u.team.ID, false) {
-					for _, r := range memberTree(u.team.Members) {
-						ids = append(ids, r.m.ID)
-					}
-				}
-			default:
-				if m.tab == "" {
-					ids = append(ids, closedRow+u.team.ID)
-					if !m.teamOpen(u.team.ID, true) {
-						continue
-					}
-				}
-				v := m.membersOf(*u.team)
-				for _, r := range v.rows {
-					ids = append(ids, r.m.ID)
-				}
-				if len(v.gone) > 0 {
-					ids = append(ids, goneRow+u.team.ID)
-				}
-			}
-		}
-	}
-	return ids
-}
+// items are the selectable ids of the current tab, in display order (list).
+func (m *topModel) items() []string { return m.listOf(nil, time.Now()).Items }
 
 // keepSel keeps the tab and selection valid after a refresh or a tab switch: a tab that went
 // away falls back to All; a selection not in the tab moves to its first row.
 func (m *topModel) keepSel() {
 	found := false
 	for _, t := range m.tabs() {
-		found = found || t.key == m.tab
+		found = found || t.Key == m.tab
 	}
 	if !found {
 		m.tab = ""
@@ -730,10 +641,14 @@ func (m *topModel) move(d int) {
 
 // click acts on what the last frame drew at x, y: a tab switches to it, a row selects it (the
 // selected row toggles the sidebar), a sidebar title switches the sidebar to it.
-func (m *topModel) click(x, y int) {
+func (m *topModel) click(x, y int) tea.Cmd {
 	h, ok := m.at(x, y)
 	switch {
 	case !ok:
+	case h.pick != "":
+		if mem, _ := m.selMember(); mem != nil && mem.ID == h.pick {
+			return m.openPicker(*mem)
+		}
 	case h.side >= 0:
 		m.side, m.sideTab = true, h.side
 	case strings.HasPrefix(h.id, closedRow) || strings.HasPrefix(h.id, goneRow):
@@ -747,6 +662,7 @@ func (m *topModel) click(x, y int) {
 		m.tab = h.tab
 		m.keepSel()
 	}
+	return nil
 }
 
 // narrow is a terminal too narrow for the sidebar beside the list: there it replaces the list
@@ -773,55 +689,35 @@ func (m *topModel) toggleSide() {
 func (m *topModel) tailable(id string) bool {
 	for _, s := range m.ps.Solos {
 		if s.ID == id {
-			_, ok := sessionReader(s.Transcript)
-			return ok
+			return view.SoloTailable(s, hasReader)
 		}
 	}
 	for _, t := range teamsOf(m.ps) {
 		for _, mem := range t.Members {
 			if mem.ID == id {
-				_, ok := sessionReader(mem.Transcript)
-				return logged(mem) || ok
+				return view.MemberTailable(mem, hasReader)
 			}
 		}
 	}
 	return false
 }
 
-// logged reports whether mem's harness declares usage: a driver log with context, turns and a
-// tail. top reads the capability; a member that declared none (spawned before capabilities)
-// is judged as before, by being headless.
-func logged(mem core.MemberState) bool {
-	if mem.Capabilities == nil {
-		return mem.Headless
-	}
-	return slices.Contains(mem.Capabilities, core.CapUsage)
+// hasReader reports whether piggery has a reader for a session's transcript.
+func hasReader(t *core.Transcript) bool {
+	_, ok := sessionReader(t)
+	return ok
 }
 
 func (m *topModel) View() tea.View {
-	v := tea.NewView(m.render())
+	if !m.still || m.frame == "" {
+		m.frame = m.render()
+	}
+	v := tea.NewView(m.frame)
 	v.AltScreen = true
 	if m.mouse {
-		v.MouseMode = tea.MouseModeCellMotion
+		v.MouseMode = tea.MouseModeAllMotion // hover needs motion without a button
 	}
 	return v
-}
-
-// names maps participant ids of the snapshot to names.
-func (m *topModel) names() map[string]string {
-	out := map[string]string{}
-	for id, n := range m.ps.Names { // event ids, closed teams included
-		out[id] = n
-	}
-	for _, t := range teamsOf(m.ps) {
-		for _, p := range t.Members {
-			out[p.ID] = p.Name
-		}
-	}
-	for _, s := range m.ps.Solos {
-		out[s.ID] = s.Name
-	}
-	return out
 }
 
 // askKill is `x`: ask to kill the selected worker, or say why it cannot be.
@@ -831,12 +727,7 @@ func (m *topModel) askKill() {
 			if mem.ID != m.sel {
 				continue
 			}
-			switch {
-			case !mem.Headless:
-				m.killNote = mem.Name + " is not a headless worker: stop it in its own window (Esc)"
-			case mem.State == "gone":
-				m.killNote = mem.Name + " is already stopped"
-			default:
+			if m.killNote = view.KillNote(mem.Name, mem.Headless, mem.State); m.killNote == "" {
 				m.killing = killAsk{id: mem.ID, name: mem.Name}
 			}
 			return
@@ -848,7 +739,7 @@ func (m *topModel) askKill() {
 			name = s.Name
 		}
 	}
-	m.killNote = name + " is not a headless worker: stop it in its own window (Esc)"
+	m.killNote = view.KillNote(name, false, "")
 }
 
 // killCmd kills ask's worker in the background and reports the result as a killed message.

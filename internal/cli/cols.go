@@ -44,47 +44,6 @@ func layout(names []string, fit []namedFit) (head []string, right map[int]bool, 
 	return head, right, steps
 }
 
-// shortPaths shortens each path for a cwd column: ~ for home; a path of at most two folders
-// under ~ as is; else its last two folders after "…/", more for paths whose tails would read the
-// same though the paths differ.
-func shortPaths(paths []string) []string {
-	parts := make([][]string, len(paths))
-	n := make([]int, len(paths))
-	for i, p := range paths {
-		parts[i] = strings.Split(home(p), "/")
-		n[i] = 2
-	}
-	short := func(i int) string {
-		ps := parts[i]
-		if len(ps) <= n[i]+1 { // ~ or / and at most n folders: nothing to cut
-			return strings.Join(ps, "/")
-		}
-		return "…/" + strings.Join(ps[len(ps)-n[i]:], "/")
-	}
-	for grown := true; grown; { // every path of a clash grows together, one folder a round
-		grown = false
-		clash := make([]bool, len(paths))
-		for i := range paths {
-			for j := range paths {
-				if i != j && home(paths[i]) != home(paths[j]) && short(i) == short(j) {
-					clash[i] = true
-				}
-			}
-		}
-		for i, c := range clash {
-			if c {
-				n[i]++
-				grown = true
-			}
-		}
-	}
-	out := make([]string, len(paths))
-	for i := range paths {
-		out[i] = short(i)
-	}
-	return out
-}
-
 // truncLeft cuts s to n display cells from the left, with … first when cut: the end of a path
 // (its last folder) is what stays.
 func truncLeft(s string, n int) string {

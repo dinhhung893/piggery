@@ -18,6 +18,7 @@ import (
 
 	"github.com/sting8k/piggery/internal/core"
 	"github.com/sting8k/piggery/internal/proto"
+	"github.com/sting8k/piggery/internal/view"
 )
 
 // tail prints a participant's log readably: a worker's rpc log (the driver's file for its latest
@@ -29,12 +30,16 @@ func (e *env) tail(args []string) error {
 	n := fs.Int("n", 20, "readable lines to show")
 	follow := fs.Bool("f", false, "follow until Ctrl-C")
 	fs.StringVar(&a.Team, "team", "", "team, when the name is in more than one")
+	asView := fs.Bool("view", false, "print the readable lines as JSON, each with its kind (for the Paseo plugin)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 {
 		return fmt.Errorf("%w: tail <worker|session> [-n N] [-f] [--team T]", errUsage)
+	}
+	if *asView && *follow {
+		return fmt.Errorf("%w: tail --view does not follow (-f)", errUsage)
 	}
 	a.Worker = pos[0]
 	c, err := e.connect()
@@ -50,9 +55,24 @@ func (e *env) tail(args []string) error {
 	if err != nil {
 		return err
 	}
-	shown, off, reader, err := lastLines(path, newReader, *n, e.json)
+	shown, off, reader, err := lastLines(path, newReader, *n, e.json && !*asView)
 	if err != nil {
 		return err
+	}
+	if *asView {
+		doc := struct {
+			Version int             `json:"version"`
+			Lines   []view.TailLine `json:"lines"`
+		}{view.Version, []view.TailLine{}}
+		for _, l := range shown {
+			doc.Lines = append(doc.Lines, view.ParseTail(l))
+		}
+		out, err := json.Marshal(doc)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(e.stdout, "%s\n", out)
+		return nil
 	}
 	for _, l := range shown {
 		fmt.Fprintln(e.stdout, l)

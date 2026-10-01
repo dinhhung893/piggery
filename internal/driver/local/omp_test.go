@@ -148,6 +148,8 @@ func ompHelper(mode string) {
 				resp = cloneMap(byID["m1"])
 				cur = afterSetModel // omp resets the level (rpc-set-model-resets-thinking)
 			}
+		case "get_available_models": // the capture (omp 18.4.2), under this request's id
+			json.Unmarshal(ompCapture(dir, "get-available-models.jsonl")[0], &resp)
 		case "set_thinking_level":
 			cur = cmd.Level
 			if v, ok := clamp[cmd.Level]; ok {
@@ -321,6 +323,10 @@ func TestOmpThinkingLevelIsChecked(t *testing.T) {
 	}
 	if ran, err := w.thinking(ctx, commandTimeout); err != nil || ran != "off" {
 		t.Fatalf("after set_model omp runs %q, %v; want off", ran, err)
+	}
+	// omp answers get_available_models as pi does: its codec is pi's.
+	if got, err := d.Models(ctx, "p2"); err != nil || !slices.Equal(got, []string{"example/glm-5.3-flash", "example/glm-5.3-pro"}) {
+		t.Fatalf("models = %v, %v", got, err)
 	}
 	d.Stop(ctx, "p2")
 }

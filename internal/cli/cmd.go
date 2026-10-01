@@ -161,11 +161,11 @@ func (e *env) root() *cobra.Command {
 				return nil
 			}),
 		team, template,
-		e.cmd("ps [--json]", "Daemon, teams, members, solos and pending mail, once", grpWatch,
+		e.cmd("ps [--json|--view]", "Daemon, teams, members, solos and pending mail, once", grpWatch,
 			"piggery ps", authAdmin, e.ps),
 		e.cmd("top", "The same, live, with the latest events and a worker's tail", grpWatch,
 			"piggery top", authAdmin, e.top),
-		e.cmd("tail <worker> [-n N] [-f] [--team T]", "A worker's rpc log, readable (--json raw)", grpWatch,
+		e.cmd("tail <worker> [-n N] [-f|--view] [--team T]", "A worker's rpc log, readable (--json raw)", grpWatch,
 			"piggery tail w1 -n 50 -f", authAdmin, e.tail),
 		e.cmd("log [--after SEQ] [--team T] [--limit N]", "Decisions and lifecycle events", grpWatch,
 			"piggery log --after 100 --limit 50", authAdmin, e.logCmd),
