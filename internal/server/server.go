@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/sting8k/piggery/internal/core"
@@ -644,21 +643,6 @@ func (s *server) unauthorized(verb, msg string) *core.Error {
 	return &core.Error{Code: core.CodeUnauthorized, Message: msg, Layer: "token"}
 }
 
-// lock takes an exclusive, non-blocking flock on path.
-func lock(path string) (func(), error) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, fmt.Errorf("another piggery serve holds %s", path)
-		}
-		return nil, err
-	}
-	return func() { f.Close() }, nil
-}
 
 func loadOrCreateAdminToken(path string) (string, error) {
 	b, err := os.ReadFile(path)

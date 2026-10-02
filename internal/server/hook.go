@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -39,9 +38,8 @@ func (s *server) notifyHook(messageID string) {
 		line, _ := json.Marshal(mail)
 		cmd := exec.CommandContext(ctx, path)
 		cmd.Stdin = bytes.NewReader(append(line, '\n'))
-		// Own process group, so a timeout kills whatever the hook started too.
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		// Own process group (unix), so a timeout kills whatever the hook started too.
+		setupHookKill(cmd)
 		cmd.WaitDelay = time.Second
 		if err := cmd.Run(); err != nil {
 			s.log.Error("notify hook", "message", messageID, "err", err, "timed_out", ctx.Err() != nil)
