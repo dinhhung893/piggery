@@ -1,0 +1,716 @@
+From 8feb58903529af488d86ca3877c9b7c77d61499c Mon Sep 17 00:00:00 2001
+From: Frank <frank@local>
+Date: Thu, 1 Oct 2026 00:18:58 +0700
+Subject: [PATCH] winport: windows-amd64 port of v0.5.3 (build-tag split, Job
+ Objects)
+
+---
+ internal/cli/client.go                    |   3 +-
+ internal/cli/detach_unix.go               |  11 ++
+ internal/cli/detach_windows.go            |  15 +++
+ internal/cli/lockfree_unix.go             |  26 +++++
+ internal/cli/lockfree_windows.go          |  30 +++++
+ internal/cli/shutdown.go                  |  16 ---
+ internal/driver/local/proctree.go         |  62 +---------
+ internal/driver/local/proctree_unix.go    |  68 +++++++++++
+ internal/driver/local/proctree_windows.go | 135 ++++++++++++++++++++++
+ internal/driver/local/runner.go           |   6 +-
+ internal/server/hook.go                   |   6 +-
+ internal/server/hook_unix.go              |  15 +++
+ internal/server/hook_windows.go           |  14 +++
+ internal/server/lock_unix.go              |  26 +++++
+ internal/server/lock_windows.go           |  30 +++++
+ internal/server/peer_windows.go           |  15 +++
+ internal/server/server.go                 |  16 ---
+ 17 files changed, 397 insertions(+), 97 deletions(-)
+ create mode 100644 internal/cli/detach_unix.go
+ create mode 100644 internal/cli/detach_windows.go
+ create mode 100644 internal/cli/lockfree_unix.go
+ create mode 100644 internal/cli/lockfree_windows.go
+ create mode 100644 internal/driver/local/proctree_unix.go
+ create mode 100644 internal/driver/local/proctree_windows.go
+ create mode 100644 internal/server/hook_unix.go
+ create mode 100644 internal/server/hook_windows.go
+ create mode 100644 internal/server/lock_unix.go
+ create mode 100644 internal/server/lock_windows.go
+ create mode 100644 internal/server/peer_windows.go
+
+diff --git a/internal/cli/client.go b/internal/cli/client.go
+index ad7fe3c..ff3f370 100644
+--- a/internal/cli/client.go
++++ b/internal/cli/client.go
+@@ -11,7 +11,6 @@ import (
+ 	"path/filepath"
+ 	"strconv"
+ 	"strings"
+-	"syscall"
+ 	"time"
+ 
+ 	"github.com/sting8k/piggery/internal/core"
+@@ -150,7 +149,7 @@ func startDaemon(dir string) (exited <-chan string, err error) {
+ 	}
+ 	cmd := exec.Command(exe, "serve")
+ 	cmd.Stdout, cmd.Stderr = logf, logf
+-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
++	detachDaemon(cmd)
+ 	if err := cmd.Start(); err != nil {
+ 		return nil, err
+ 	}
+diff --git a/internal/cli/detach_unix.go b/internal/cli/detach_unix.go
+new file mode 100644
+index 0000000..5fa3903
+--- /dev/null
++++ b/internal/cli/detach_unix.go
+@@ -0,0 +1,11 @@
++//go:build unix
++
++package cli
++
++import (
++	"os/exec"
++	"syscall"
++)
++
++// detachDaemon starts the daemon in a session of its own, so it outlives this client.
++func detachDaemon(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} }
+diff --git a/internal/cli/detach_windows.go b/internal/cli/detach_windows.go
+new file mode 100644
+index 0000000..1440f49
+--- /dev/null
++++ b/internal/cli/detach_windows.go
+@@ -0,0 +1,15 @@
++//go:build windows
++
++package cli
++
++import (
++	"os/exec"
++	"syscall"
++)
++
++// detachDaemon starts the daemon detached from this client's console (CREATE_NO_WINDOW, so no
++// console window pops up; the log files carry stdout/stderr). Windows has no sessions: the child
++// outlives the parent by default, so no extra step is needed.
++func detachDaemon(cmd *exec.Cmd) {
++	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
++}
+diff --git a/internal/cli/lockfree_unix.go b/internal/cli/lockfree_unix.go
+new file mode 100644
+index 0000000..a4b26ad
+--- /dev/null
++++ b/internal/cli/lockfree_unix.go
+@@ -0,0 +1,26 @@
++//go:build unix
++
++package cli
++
++import (
++	"errors"
++	"os"
++	"syscall"
++)
++
++// lockFree reports whether no daemon holds the singleton lock at path.
++func lockFree(path string) (bool, error) {
++	f, err := os.OpenFile(path, os.O_RDWR, 0)
++	if errors.Is(err, os.ErrNotExist) {
++		return true, nil
++	}
++	if err != nil {
++		return false, err
++	}
++	defer f.Close()
++	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
++	if errors.Is(err, syscall.EWOULDBLOCK) {
++		return false, nil
++	}
++	return err == nil, err
++}
+diff --git a/internal/cli/lockfree_windows.go b/internal/cli/lockfree_windows.go
+new file mode 100644
+index 0000000..2003e99
+--- /dev/null
++++ b/internal/cli/lockfree_windows.go
+@@ -0,0 +1,30 @@
++//go:build windows
++
++package cli
++
++import (
++	"errors"
++	"os"
++
++	"golang.org/x/sys/windows"
++)
++
++// lockFree reports whether no daemon holds the singleton lock at path (same LockFileEx byte
++// range the daemon's lock takes in internal/server).
++func lockFree(path string) (bool, error) {
++	f, err := os.OpenFile(path, os.O_RDWR, 0)
++	if errors.Is(err, os.ErrNotExist) {
++		return true, nil
++	}
++	if err != nil {
++		return false, err
++	}
++	defer f.Close()
++	ol := new(windows.Overlapped)
++	if err := windows.LockFileEx(windows.Handle(f.Fd()),
++		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, ol); err != nil {
++		return false, nil
++	}
++	windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, ol)
++	return true, nil
++}
+diff --git a/internal/cli/shutdown.go b/internal/cli/shutdown.go
+index 4184f46..b6b1a13 100644
+--- a/internal/cli/shutdown.go
++++ b/internal/cli/shutdown.go
+@@ -125,19 +125,3 @@ func (e *env) restart(args []string) error {
+ 	return nil
+ }
+ 
+-// lockFree reports whether no daemon holds the singleton lock at path.
+-func lockFree(path string) (bool, error) {
+-	f, err := os.OpenFile(path, os.O_RDWR, 0)
+-	if errors.Is(err, os.ErrNotExist) {
+-		return true, nil
+-	}
+-	if err != nil {
+-		return false, err
+-	}
+-	defer f.Close()
+-	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+-	if errors.Is(err, syscall.EWOULDBLOCK) {
+-		return false, nil
+-	}
+-	return err == nil, err
+-}
+diff --git a/internal/driver/local/proctree.go b/internal/driver/local/proctree.go
+index 7458708..570eb50 100644
+--- a/internal/driver/local/proctree.go
++++ b/internal/driver/local/proctree.go
+@@ -1,48 +1,21 @@
+ package local
+ 
+-import (
+-	"os/exec"
+-	"strconv"
+-	"strings"
+-	"syscall"
+-)
+-
+ // A harness runs its tools in child processes, often each in a process group of its own (pi's
+ // bash tool does), so signalling the worker's group misses them; and once the harness dies its
+ // children reparent to init and can no longer be found. So the tree is read first, from the
+ // worker's pid down, and every member is signalled: its group when the group's leader is in the
+ // tree too, otherwise the pid alone.
++//
++// The platform pieces (processTable, signalTree and the kill and group hooks the runner uses)
++// live in proctree_unix.go and proctree_windows.go.
+ 
+-// proc is one row of the process table. start is `ps lstart` verbatim: a pid is the same process
+-// only while its start is too.
++// proc is one row of the process table. start is a platform identity string: a pid is the same
++// process only while its start is too.
+ type proc struct {
+ 	pid, ppid, pgid int
+ 	start           string
+ }
+ 
+-// processTable is every process (`ps -A`, on macOS and Linux); nil when it cannot be read.
+-func processTable() []proc {
+-	out, err := exec.Command("ps", "-A", "-o", "pid=,ppid=,pgid=,lstart=").Output()
+-	if err != nil {
+-		return nil
+-	}
+-	var rows []proc
+-	for _, line := range strings.Split(string(out), "\n") {
+-		f := strings.Fields(line)
+-		if len(f) < 8 {
+-			continue
+-		}
+-		pid, e1 := strconv.Atoi(f[0])
+-		ppid, e2 := strconv.Atoi(f[1])
+-		pgid, e3 := strconv.Atoi(f[2])
+-		if e1 != nil || e2 != nil || e3 != nil {
+-			continue
+-		}
+-		rows = append(rows, proc{pid, ppid, pgid, strings.Join(f[3:], " ")})
+-	}
+-	return rows
+-}
+-
+ // treeBelow is the descendants of root (root itself not included; it is signalled by its group),
+ // plus every process of known that is still the same one, with their descendants. known is an
+ // earlier treeBelow: it finds what has been reparented since. root is a seed only when it is alive
+@@ -79,28 +52,3 @@ func treeBelow(root int, rootAlive bool, known []proc) []proc {
+ 	}
+ 	return out
+ }
+-
+-// signalTree sends sig to the worker's group pgid (when group: the leader has not been reaped, or
+-// was alive when this stop began) and to each member of tree.
+-func (d *Driver) signalTree(pgid int, group bool, tree []proc, sig syscall.Signal) {
+-	if group {
+-		d.kill(-pgid, sig)
+-	}
+-	own := syscall.Getpgrp()
+-	leader := map[int]bool{}
+-	for _, p := range tree {
+-		leader[p.pid] = true
+-	}
+-	sent := map[int]bool{pgid: group}
+-	for _, p := range tree {
+-		if p.pgid > 1 && p.pgid != own && !sent[p.pgid] && leader[p.pgid] {
+-			sent[p.pgid] = true
+-			d.kill(-p.pgid, sig)
+-		}
+-	}
+-	for _, p := range tree {
+-		if !sent[p.pgid] && p.pid > 1 {
+-			d.kill(p.pid, sig)
+-		}
+-	}
+-}
+diff --git a/internal/driver/local/proctree_unix.go b/internal/driver/local/proctree_unix.go
+new file mode 100644
+index 0000000..6a7a0d0
+--- /dev/null
++++ b/internal/driver/local/proctree_unix.go
+@@ -0,0 +1,68 @@
++//go:build unix
++
++package local
++
++import (
++	"os"
++	"os/exec"
++	"strconv"
++	"strings"
++	"syscall"
++)
++
++// processTable is every process (`ps -A`, on macOS and Linux); nil when it cannot be read.
++func processTable() []proc {
++	out, err := exec.Command("ps", "-A", "-o", "pid=,ppid=,pgid=,lstart=").Output()
++	if err != nil {
++		return nil
++	}
++	var rows []proc
++	for _, line := range strings.Split(string(out), "\n") {
++		f := strings.Fields(line)
++		if len(f) < 8 {
++			continue
++		}
++		pid, e1 := strconv.Atoi(f[0])
++		ppid, e2 := strconv.Atoi(f[1])
++		pgid, e3 := strconv.Atoi(f[2])
++		if e1 != nil || e2 != nil || e3 != nil {
++			continue
++		}
++		rows = append(rows, proc{pid, ppid, pgid, strings.Join(f[3:], " ")})
++	}
++	return rows
++}
++
++// signalTree sends sig to the worker's group pgid (when group: the leader has not been reaped, or
++// was alive when this stop began) and to each member of tree.
++func (d *Driver) signalTree(pgid int, group bool, tree []proc, sig syscall.Signal) {
++	if group {
++		d.kill(-pgid, sig)
++	}
++	own := syscall.Getpgrp()
++	leader := map[int]bool{}
++	for _, p := range tree {
++		leader[p.pid] = true
++	}
++	sent := map[int]bool{pgid: group}
++	for _, p := range tree {
++		if p.pgid > 1 && p.pgid != own && !sent[p.pgid] && leader[p.pgid] {
++			sent[p.pgid] = true
++			d.kill(-p.pgid, sig)
++		}
++	}
++	for _, p := range tree {
++		if !sent[p.pgid] && p.pid > 1 {
++			d.kill(p.pid, sig)
++		}
++	}
++}
++
++// newKill is the kill used by the runner: syscall.Kill.
++func newKill() func(pid int, sig syscall.Signal) error { return syscall.Kill }
++
++// setPgid puts cmd in a process group of its own.
++func setPgid(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} }
++
++// attachJob is a no-op on unix: the process group above covers the tree.
++func attachJob(_ *os.Process, _ *worker) {}
+diff --git a/internal/driver/local/proctree_windows.go b/internal/driver/local/proctree_windows.go
+new file mode 100644
+index 0000000..4d98225
+--- /dev/null
++++ b/internal/driver/local/proctree_windows.go
+@@ -0,0 +1,135 @@
++//go:build windows
++
++package local
++
++import (
++	"os"
++	"os/exec"
++	"strconv"
++	"sync"
++	"syscall"
++	"unsafe"
++
++	"golang.org/x/sys/windows"
++)
++
++// A worker's job object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) stands in for the unix process
++// group: TerminateJobObject kills the worker and everything it has spawned at once, including
++// children that appeared after the last process-table read. jobs maps the worker's pgid (its
++// pid: Windows has no process groups) to the job. Handles stay open for the life of the
++// process — one per worker ever run — so a late kill still reaches the tree; the job kills
++// whatever is left if this process exits first.
++var (
++	jobsMu sync.Mutex
++	jobs   = map[int]windows.Handle{} // pgid -> job object
++)
++
++// processTable is every process, from the toolhelp snapshot; nil when it cannot be read.
++// pgid is the pid (Windows has no process groups).
++func processTable() []proc {
++	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
++	if err != nil {
++		return nil
++	}
++	defer windows.CloseHandle(snap)
++	var rows []proc
++	var e windows.ProcessEntry32
++	e.Size = uint32(unsafe.Sizeof(e))
++	for ok := windows.Process32First(snap, &e); ok == nil; ok = windows.Process32Next(snap, &e) {
++		pid := int(e.ProcessID)
++		rows = append(rows, proc{pid: pid, ppid: int(e.ParentProcessID), pgid: pid, start: procStart(pid)})
++	}
++	return rows
++}
++
++// procStart is the process's creation time as an identity string, "" when unknown (system
++// processes cannot be opened).
++func procStart(pid int) string {
++	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
++	if err != nil {
++		return ""
++	}
++	defer windows.CloseHandle(h)
++	var ct, et, kt, ut windows.Filetime
++	if err := windows.GetProcessTimes(h, &ct, &et, &kt, &ut); err != nil {
++		return ""
++	}
++	return strconv.FormatInt(ct.Nanoseconds(), 10)
++}
++
++// signalTree sends sig to the worker's job (when group and the leader is not reaped: the job
++// terminates the whole tree at once) and to each member of tree that is not in it.
++func (d *Driver) signalTree(pgid int, group bool, tree []proc, sig syscall.Signal) {
++	if sig != syscall.SIGKILL {
++		return // Windows has no deliverable SIGTERM; the graceful step is the stdin close in Stop.
++	}
++	if group {
++		d.kill(-pgid, sig)
++	}
++	for _, p := range tree {
++		d.kill(p.pid, sig)
++	}
++}
++
++// newKill is the kill used by the runner: SIGKILL terminates (the job for -pgid, the process
++// otherwise); SIGTERM cannot be delivered on Windows, so it is a no-op.
++func newKill() func(pid int, sig syscall.Signal) error {
++	return func(pid int, sig syscall.Signal) error {
++		if sig != syscall.SIGKILL {
++			return nil
++		}
++		if pid < 0 {
++			jobsMu.Lock()
++			job := jobs[-pid]
++			jobsMu.Unlock()
++			if job == 0 {
++				return syscall.EINVAL
++			}
++			return windows.TerminateJobObject(job, 1)
++		}
++		h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
++		if err != nil {
++			return err
++		}
++		defer windows.CloseHandle(h)
++		return windows.TerminateProcess(h, 1)
++	}
++}
++
++// setPgid is a no-op on Windows: the job object assigned in attachJob covers the tree.
++func setPgid(_ *exec.Cmd) {}
++
++// attachJob creates the worker's kill-tree job object and assigns its process to it; a failure
++// leaves the worker unassigned (signalTree still kills the table-read tree by pid).
++func attachJob(p *os.Process, w *worker) {
++	job, err := windows.CreateJobObject(nil, nil)
++	if err != nil {
++		return
++	}
++	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
++	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
++	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
++		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
++		windows.CloseHandle(job)
++		return
++	}
++	if err := windows.AssignProcessToJobObject(job, procHandle(p)); err != nil {
++		windows.CloseHandle(job)
++		return
++	}
++	jobsMu.Lock()
++	jobs[w.pgid] = job
++	jobsMu.Unlock()
++	w.job = uintptr(job)
++}
++// procHandle is the worker's real handle from its pid, for AssignProcessToJobObject. Go's
++// os.Process keeps only a pseudo handle (current-process-relative), which would assign the
++// wrong process. PROCESS_SET_QUOTA | PROCESS_TERMINATE are the rights AssignProcessToJobObject
++// needs; 0 on failure and attachJob gives up.
++func procHandle(p *os.Process) windows.Handle {
++	h, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(p.Pid))
++	if err != nil {
++		return 0
++	}
++	return h
++}
+diff --git a/internal/driver/local/runner.go b/internal/driver/local/runner.go
+index 640a7ec..cca6d41 100644
+--- a/internal/driver/local/runner.go
++++ b/internal/driver/local/runner.go
+@@ -123,6 +123,7 @@ type worker struct {
+ 	harnessRef    string // the session id the harness chose (Codex's thread), set by started
+ 	logPth        string
+ 	pgid          int
++	job           uintptr // windows: the worker's kill-tree job object; 0 when none
+ 	cmd           *exec.Cmd
+ 
+ 	inMu  sync.Mutex // serializes stdin writes (replies, control commands) with its close (stop)
+@@ -162,7 +163,7 @@ func newWith(dir string, opts Options, c codec) *Driver {
+ 	if opts.KillWait == 0 {
+ 		opts.KillWait = 2 * time.Second
+ 	}
+-	return &Driver{dir: dir, opts: opts, codec: c, procs: map[string]*worker{}, kill: syscall.Kill}
++	return &Driver{dir: dir, opts: opts, codec: c, procs: map[string]*worker{}, kill: newKill()}
+ }
+ 
+ // LogPath is the normalized stdout log of one run.
+@@ -274,7 +275,7 @@ func (d *Driver) Start(_ context.Context, s core.Spec) (core.Proc, error) {
+ 	cmd.Dir = s.Cwd
+ 	cmd.Env = workerEnv(os.Environ(), s, l.env)
+ 	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, stderr
+-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
++	setPgid(cmd)
+ 	err = cmd.Start()
+ 	inR.Close()
+ 	outW.Close()
+@@ -286,6 +287,7 @@ func (d *Driver) Start(_ context.Context, s core.Spec) (core.Proc, error) {
+ 	}
+ 
+ 	w := &worker{participantID: s.ParticipantID, runID: s.RunID, harness: d.codec.harness(), logPth: logPth, pgid: cmd.Process.Pid, cmd: cmd, stdin: inW, done: make(chan struct{})}
++	attachJob(cmd.Process, w)
+ 	d.mu.Lock()
+ 	d.procs[s.ParticipantID] = w
+ 	d.mu.Unlock()
+diff --git a/internal/server/hook.go b/internal/server/hook.go
+index fa1d797..c13ae4d 100644
+--- a/internal/server/hook.go
++++ b/internal/server/hook.go
+@@ -7,7 +7,6 @@ import (
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
+-	"syscall"
+ 	"time"
+ )
+ 
+@@ -39,9 +38,8 @@ func (s *server) notifyHook(messageID string) {
+ 		line, _ := json.Marshal(mail)
+ 		cmd := exec.CommandContext(ctx, path)
+ 		cmd.Stdin = bytes.NewReader(append(line, '\n'))
+-		// Own process group, so a timeout kills whatever the hook started too.
+-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+-		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
++		// Own process group (unix), so a timeout kills whatever the hook started too.
++		setupHookKill(cmd)
+ 		cmd.WaitDelay = time.Second
+ 		if err := cmd.Run(); err != nil {
+ 			s.log.Error("notify hook", "message", messageID, "err", err, "timed_out", ctx.Err() != nil)
+diff --git a/internal/server/hook_unix.go b/internal/server/hook_unix.go
+new file mode 100644
+index 0000000..98355b0
+--- /dev/null
++++ b/internal/server/hook_unix.go
+@@ -0,0 +1,15 @@
++//go:build unix
++
++package server
++
++import (
++	"os/exec"
++	"syscall"
++)
++
++// setupHookKill gives the hook a process group of its own, so the timeout kill reaches whatever
++// the hook started too, and makes exec's Cancel kill that group.
++func setupHookKill(cmd *exec.Cmd) {
++	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
++	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
++}
+diff --git a/internal/server/hook_windows.go b/internal/server/hook_windows.go
+new file mode 100644
+index 0000000..05222b6
+--- /dev/null
++++ b/internal/server/hook_windows.go
+@@ -0,0 +1,14 @@
++//go:build windows
++
++package server
++
++import (
++	"os/exec"
++)
++
++// setupHookKill arms exec's Cancel on windows: Process.Kill terminates the hook itself. Windows
++// has no process groups, so children the hook started survive it; hooks are single short-lived
++// processes and WaitDelay reaps the run either way.
++func setupHookKill(cmd *exec.Cmd) {
++	cmd.Cancel = func() error { return cmd.Process.Kill() }
++}
+diff --git a/internal/server/lock_unix.go b/internal/server/lock_unix.go
+new file mode 100644
+index 0000000..42193df
+--- /dev/null
++++ b/internal/server/lock_unix.go
+@@ -0,0 +1,26 @@
++//go:build unix
++
++package server
++
++import (
++	"errors"
++	"fmt"
++	"os"
++	"syscall"
++)
++
++// lock takes an exclusive, non-blocking flock on path.
++func lock(path string) (func(), error) {
++	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
++	if err != nil {
++		return nil, err
++	}
++	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
++		f.Close()
++		if errors.Is(err, syscall.EWOULDBLOCK) {
++			return nil, fmt.Errorf("another piggery serve holds %s", path)
++		}
++		return nil, err
++	}
++	return func() { f.Close() }, nil
++}
+diff --git a/internal/server/lock_windows.go b/internal/server/lock_windows.go
+new file mode 100644
+index 0000000..aaf66c5
+--- /dev/null
++++ b/internal/server/lock_windows.go
+@@ -0,0 +1,30 @@
++//go:build windows
++
++package server
++
++import (
++	"fmt"
++	"os"
++
++	"golang.org/x/sys/windows"
++)
++
++// lock takes an exclusive, non-blocking byte-range lock on path (LockFileEx in place of unix
++// flock); unlocking it releases the lock and closes the file.
++func lock(path string) (func(), error) {
++	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
++	if err != nil {
++		return nil, err
++	}
++	ol := new(windows.Overlapped)
++	h := windows.Handle(f.Fd())
++	if err := windows.LockFileEx(h, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
++		0, 1, 0, ol); err != nil {
++		f.Close()
++		return nil, fmt.Errorf("another piggery serve holds %s", path)
++	}
++	return func() {
++		windows.UnlockFileEx(h, 0, 1, 0, ol)
++		f.Close()
++	}, nil
++}
+diff --git a/internal/server/peer_windows.go b/internal/server/peer_windows.go
+new file mode 100644
+index 0000000..40943eb
+--- /dev/null
++++ b/internal/server/peer_windows.go
+@@ -0,0 +1,15 @@
++//go:build windows
++
++package server
++
++import (
++	"errors"
++	"net"
++)
++
++// peerPID is the pid of the process at the other end of a unix socket. Windows has no
++// SO_PEERCRED/LOCAL_PEERPID equivalent reachable from Go's net API, so peer-based checks
++// (byHost auth, the worker-bound identify gate) deny on windows; token auth is unaffected.
++func peerPID(nc net.Conn) (int, error) {
++	return 0, errors.New("peer pid is not supported on windows")
++}
+diff --git a/internal/server/server.go b/internal/server/server.go
+index aa0b94f..f099c10 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -17,7 +17,6 @@ import (
+ 	"path/filepath"
+ 	"strings"
+ 	"sync"
+-	"syscall"
+ 	"time"
+ 
+ 	"github.com/sting8k/piggery/internal/core"
+@@ -642,21 +641,6 @@ func (s *server) unauthorized(verb, msg string) *core.Error {
+ 	return &core.Error{Code: core.CodeUnauthorized, Message: msg, Layer: "token"}
+ }
+ 
+-// lock takes an exclusive, non-blocking flock on path.
+-func lock(path string) (func(), error) {
+-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+-	if err != nil {
+-		return nil, err
+-	}
+-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+-		f.Close()
+-		if errors.Is(err, syscall.EWOULDBLOCK) {
+-			return nil, fmt.Errorf("another piggery serve holds %s", path)
+-		}
+-		return nil, err
+-	}
+-	return func() { f.Close() }, nil
+-}
+ 
+ func loadOrCreateAdminToken(path string) (string, error) {
+ 	b, err := os.ReadFile(path)
