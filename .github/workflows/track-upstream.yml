@@ -117,7 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.detect.outputs.latest }}+winport"
-          CGO_ENABLED=0 GOOS=windows GOARmd64 \
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
             go build -ldflags "-X github.com/sting8k/piggery/internal/cli.Version=${VERSION}" \
             -o piggery-windows-amd64.exe ./cmd/piggery
           SHA=$(sha256sum piggery-windows-amd64.exe | cut -d' ' -f1)
