@@ -64,6 +64,13 @@ jobs:
           if gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$LATEST in:title" | grep -q .; then
             echo "Issue for $LATEST already open — nothing to do."; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
+          # If the automation branch exists but has no open PR (previous run failed
+          # before gh pr create), delete it so this run starts fresh. If a PR DOES
+          # exist, the PR-check above already skipped this run.
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "Stale branch $BRANCH exists without open PR -- deleting for a fresh rebase."
+            git push origin --delete "$BRANCH"
+          fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Try automated rebase onto the new tag
@@ -134,6 +141,13 @@ jobs:
           LATEST: ${{ steps.detect.outputs.latest }}
           BRANCH: ${{ steps.detect.outputs.branch }}
         run: |
+          set -euo pipefail
+          # merge main (carries patch + workflows) so the PR is a clean superset,
+          # not diverged from the tag the branch started from
+          git merge main --no-edit
+          # capture gate logs for the PR body BEFORE removing the file
+          GATE_LOGS=$(cat gate-report.md)
+          rm -f gate-report.md
           git add -A
           git commit -m "winport: apply patch series onto ${LATEST}"
           git push origin "$BRANCH"
@@ -142,7 +156,7 @@ jobs:
             echo ""
             echo "All gates passed on the automation branch:"
             echo ""
-            cat gate-report.md
+            $GATE_LOGS
             echo ""
             echo "## To release"
             echo "1. Review the diff (especially upstream changes touching winported files)."
@@ -150,11 +164,13 @@ jobs:
             echo "3. Push tag \`${LATEST}+winport\` → build-windows.yml publishes the release asset."
             echo "4. On the machine: run scripts/update-piggery.ps1"
           } > pr-body.md
-          gh pr create \
-            --repo "$GITHUB_REPOSITORY" \
-            --head "$BRANCH" \
-            --title "${LATEST}+winport ready — review & merge" \
-            --body-file pr-body.md
+          # create the PR via the REST API (equivalent permissions to gh pr create,
+          # but an explicit, debuggable call)
+          gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" \
+            -f title="${LATEST}+winport ready" \
+            -f head="$BRANCH" \
+            -f base="main" \
+            -F body="$(cat pr-body.md)"
 
       - name: Open issue (conflict — manual rebase needed)
         if: steps.rebase.outputs.apply == 'conflict'
