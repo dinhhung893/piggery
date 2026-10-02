@@ -156,7 +156,7 @@ jobs:
             echo ""
             echo "All gates passed on the automation branch:"
             echo ""
-            $GATE_LOGS
+            echo "$GATE_LOGS"
             echo ""
             echo "## To release"
             echo "1. Review the diff (especially upstream changes touching winported files)."
