@@ -60,6 +60,15 @@ func (c *conn) peerOK(host string, depth int) bool {
 	if ok, seen := c.hosts[host]; seen {
 		return ok
 	}
+	if !peerGateSupported() {
+		// Windows (and other platforms without peer-pid): skip the gate.
+		// Token auth is the security boundary; see peer_gate_windows.go.
+		if c.hosts == nil {
+			c.hosts = map[string]bool{}
+		}
+		c.hosts[host] = true
+		return true
+	}
 	pid, err := peerPID(c.nc)
 	ok := err == nil && hostMatches(pid, host, depth)
 	if c.hosts == nil {
