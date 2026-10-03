@@ -1,3 +1,9 @@
+> **⚠ Windows build notice** — This is a **winport fork** of [sting8k/piggery](https://github.com/sting8k/piggery).
+> **Install:** download `piggery-windows-amd64.exe` from [Releases](https://github.com/dinhhung893/piggery/releases) — auto-built by CI on every upstream release.
+> Patch details: [docs/winport-series/](docs/winport-series/). Everything below is upstream's README.
+
+---
+
 # Piggery 🐖 - Lợn cày tasks
 
 Your coding agents are pigs. Piggery is the farm.
