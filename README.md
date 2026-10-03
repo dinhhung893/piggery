@@ -1,10 +1,4 @@
-> **⚠ Windows build notice** — This is a **winport fork** of [sting8k/piggery](https://github.com/sting8k/piggery).
-> **Install:** download `piggery-windows-amd64.exe` from [Releases](https://github.com/dinhhung893/piggery/releases) — auto-built by CI on every upstream release.
-> Patch details: [docs/winport-series/](docs/winport-series/). Everything below is upstream's README.
-
----
-
-# Piggery 🐖 - Lợn cày tasks
+# Piggery-Winport 🐖 - Lợn cày tasks
 
 Your coding agents are pigs. Piggery is the farm.
 
@@ -51,23 +45,23 @@ piggery is installed in it.
 
 ## Install
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/sting8k/piggery/main/install.sh | sh
-piggery setup pi       # and/or: claude, codex, omp, dsh
-```
+> **Windows build** — this fork publishes `piggery-windows-amd64.exe` for every upstream release.
 
-The script picks the build for your OS and CPU (Linux or macOS, amd64 or arm64), checks it against
-the release's `checksums.txt`, and installs it in `~/.local/bin` (`PIGGERY_INSTALL_DIR` to change it,
-`PIGGERY_VERSION=v0.3.0` for a given release). By hand: download `piggery-<os>-<arch>` (`darwin-arm64`,
-`darwin-amd64`, `linux-amd64`, `linux-arm64`) from the
-[latest release](https://github.com/sting8k/piggery/releases/latest), `chmod +x` it and put it on
-your PATH.
+Download the binary from the [latest release](https://github.com/dinhhung893/piggery/releases/latest),
+verify it against the bundled `.sha256` file, and put it on your PATH (e.g. `%USERPROFILE%\.local\bin`).
+
+To update later, download the newer release and swap the binary, or run the update script from
+your local winport pipeline if you have one.
+
+The upstream install script (`curl … install.sh`) does **not** serve Windows builds — upstream
+releases cover Linux and macOS only. See the upstream
+[README](https://github.com/sting8k/piggery#install) for those platforms.
 
 Using [Paseo](https://paseo.sh)? `piggery setup paseo` adds a Piggery view (the same as
 `piggery top`) to the app. Turn on plugins in Paseo's settings once.
 
-Or build it: `go install github.com/sting8k/piggery/cmd/piggery@latest` (Go 1.26+).
-`piggery update` installs a newer release. Every release has a `checksums.txt`; what changed is in
+`piggery update` checks the upstream releases and will report "no build for windows/amd64" —
+that is expected on this fork; use the Releases page instead. What changed is in
 [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick start
