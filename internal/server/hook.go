@@ -27,7 +27,7 @@ func NotifyHooks(dir string) (files []string, legacy bool) {
 	}
 	entries, _ := os.ReadDir(NotifyHooksDir(dir))
 	for _, e := range entries {
-		if fi, err := os.Stat(filepath.Join(NotifyHooksDir(dir), e.Name())); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
+		if fi, err := os.Stat(filepath.Join(NotifyHooksDir(dir), e.Name())); err == nil && hookRunnable(fi) {
 			files = append(files, filepath.Join(NotifyHooksDir(dir), e.Name()))
 		}
 	}
