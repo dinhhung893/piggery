@@ -1,4 +1,4 @@
-# piggery-winport 🐖 - Lợn cày tasks
+# piggery-winport 🐖
 
 Your coding agents are pigs. Piggery is the farm.
 
