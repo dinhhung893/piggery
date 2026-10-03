@@ -93,7 +93,8 @@ func Newer(latest, current string) bool {
 }
 
 func versionNumbers(tag string) (v [3]int, ok bool) {
-	tag, _, _ = strings.Cut(strings.TrimPrefix(tag, "v"), "-")
+	tag, _, _ = strings.Cut(strings.TrimPrefix(tag, "v"), "+")
+	tag, _, _ = strings.Cut(tag, "-")
 	parts := strings.Split(tag, ".")
 	if len(parts) != 3 {
 		return v, false

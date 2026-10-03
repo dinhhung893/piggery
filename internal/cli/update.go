@@ -190,6 +190,22 @@ func (u updater) install(ctx context.Context, r release) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	if runtime.GOOS == "windows" {
+		// Windows cannot rename over a running executable. The 3-step dance:
+		// rename the running exe out of the way (allowed), rename the new binary in,
+		// then clean up the old file (may fail while running, that is fine).
+		oldPath := exe + ".old"
+		if err := os.Rename(exe, oldPath); err != nil {
+			return fmt.Errorf("rename current binary out of the way: %w", err)
+		}
+		if err := os.Rename(tmp.Name(), exe); err != nil {
+			// restore the old binary if the second rename fails
+			os.Rename(oldPath, exe)
+			return fmt.Errorf("rename new binary into place: %w", err)
+		}
+		os.Remove(oldPath) // best-effort; may fail while the old process runs
+		return nil
+	}
 	return os.Rename(tmp.Name(), exe)
 }
 
