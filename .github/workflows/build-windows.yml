@@ -7,7 +7,7 @@ name: build-windows
 on:
   push:
     tags:
-      - "v*+winport"
+      - "v*winport"
   workflow_dispatch: {}
 
 permissions:
