@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/sting8k/piggery/internal/core"
@@ -150,7 +149,7 @@ func startDaemon(dir string) (exited <-chan string, err error) {
 	}
 	cmd := exec.Command(exe, "serve")
 	cmd.Stdout, cmd.Stderr = logf, logf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	detachDaemon(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

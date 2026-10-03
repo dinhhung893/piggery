@@ -123,6 +123,7 @@ type worker struct {
 	harnessRef    string // the session id the harness chose (Codex's thread), set by started
 	logPth        string
 	pgid          int
+	job           uintptr // windows: the worker's kill-tree job object; 0 when none
 	cmd           *exec.Cmd
 
 	inMu  sync.Mutex // serializes stdin writes (replies, control commands) with its close (stop)
@@ -162,7 +163,7 @@ func newWith(dir string, opts Options, c codec) *Driver {
 	if opts.KillWait == 0 {
 		opts.KillWait = 2 * time.Second
 	}
-	return &Driver{dir: dir, opts: opts, codec: c, procs: map[string]*worker{}, kill: syscall.Kill}
+	return &Driver{dir: dir, opts: opts, codec: c, procs: map[string]*worker{}, kill: newKill()}
 }
 
 // LogPath is the normalized stdout log of one run.
@@ -283,7 +284,7 @@ func (d *Driver) Start(_ context.Context, s core.Spec) (core.Proc, error) {
 	cmd.Dir = s.Cwd
 	cmd.Env = workerEnv(os.Environ(), s, l.env)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setPgid(cmd)
 	err = cmd.Start()
 	inR.Close()
 	outW.Close()
@@ -295,6 +296,7 @@ func (d *Driver) Start(_ context.Context, s core.Spec) (core.Proc, error) {
 	}
 
 	w := &worker{participantID: s.ParticipantID, runID: s.RunID, harness: d.codec.harness(), logPth: logPth, pgid: cmd.Process.Pid, cmd: cmd, stdin: inW, done: make(chan struct{})}
+	attachJob(cmd.Process, w)
 	d.mu.Lock()
 	d.procs[s.ParticipantID] = w
 	d.mu.Unlock()
