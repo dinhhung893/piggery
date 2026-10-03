@@ -29,7 +29,7 @@ var Version = "dev"
 
 // latestRelease is the GitHub API URL of the newest release (the release workflow names its
 // assets: piggery-<os>-<arch> and checksums.txt).
-const latestRelease = "https://api.github.com/repos/sting8k/piggery/releases/latest"
+const latestRelease = "https://api.github.com/repos/dinhhung893/piggery-winport/releases/latest"
 
 // maxDownload bounds a downloaded binary or checksums file.
 const maxDownload = 256 << 20
@@ -111,33 +111,47 @@ func (u updater) get(ctx context.Context, url string) ([]byte, error) {
 // checksum or any failure leaves the binary as it was.
 func (u updater) install(ctx context.Context, r release) error {
 	name := fmt.Sprintf("piggery-%s-%s", u.goos, u.goarch)
+	if u.goos == "windows" {
+		name += ".exe"
+	}
+	// winport: fork publishes per-file .sha256 assets (not checksums.txt)
+	var want string
+	sumURL, ok := r.asset(name + ".sha256")
+	if ok {
+		sums, err := u.get(ctx, sumURL)
+		if err != nil {
+			return err
+		}
+		want = strings.Fields(string(sums))[0]
+	} else {
+		// fallback: try upstream-style checksums.txt
+		sumURL2, ok2 := r.asset("checksums.txt")
+		if !ok2 {
+			return fmt.Errorf("release %s has no checksum for %s: not installing an unchecked binary", r.Tag, name)
+		}
+		sums, err := u.get(ctx, sumURL2)
+		if err != nil {
+			return err
+		}
+		for _, l := range strings.Split(string(sums), "\n") {
+			if f := strings.Fields(l); len(f) == 2 && f[1] == name {
+				want = f[0]
+			}
+		}
+		if want == "" {
+			return fmt.Errorf("checksums of %s does not list %s", r.Tag, name)
+		}
+	}
 	binURL, ok := r.asset(name)
 	if !ok {
 		return fmt.Errorf("release %s has no %s (no build for %s/%s)", r.Tag, name, u.goos, u.goarch)
-	}
-	sumURL, ok := r.asset("checksums.txt")
-	if !ok {
-		return fmt.Errorf("release %s has no checksums.txt: not installing an unchecked binary", r.Tag)
-	}
-	sums, err := u.get(ctx, sumURL)
-	if err != nil {
-		return err
-	}
-	want := ""
-	for _, l := range strings.Split(string(sums), "\n") {
-		if f := strings.Fields(l); len(f) == 2 && f[1] == name {
-			want = f[0]
-		}
-	}
-	if want == "" {
-		return fmt.Errorf("checksums.txt of %s does not list %s", r.Tag, name)
 	}
 	bin, err := u.get(ctx, binURL)
 	if err != nil {
 		return err
 	}
 	if sum := sha256.Sum256(bin); hex.EncodeToString(sum[:]) != want {
-		return fmt.Errorf("%s: sha256 %s does not match checksums.txt (%s); nothing replaced", name, hex.EncodeToString(sum[:]), want)
+		return fmt.Errorf("%s: sha256 %s does not match (%s); nothing replaced", name, hex.EncodeToString(sum[:]), want)
 	}
 
 	exe := u.exe
