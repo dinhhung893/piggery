@@ -1,17 +1,12 @@
 name: track-upstream
 
-# Weekly cron: check upstream for a new release tag, try to apply the winport
-# patch automatically on top of it, and open a PR (clean) or an issue (conflict).
-# NEVER publishes a release — Frank merges the PR, then pushes the tag, which
-# triggers build-windows.yml.
-#
-# PREREQUISITE: the patch file must exist in this fork at docs/winport-series/
-# (one-time setup per SETUP.md) — the workflow stashes it to $RUNNER_TEMP,
-# because the automation branch starts from the pristine upstream tag.
+# Weekly cron: fetch upstream, merge into fork main (which already carries the winport),
+# then tag + build a new Windows release. No patch-apply needed — main IS the winport.
+# If merge conflicts arise, an issue is created for manual resolution.
 
 on:
   schedule:
-    - cron: "0 6 * * 1" # every Monday 06:00 UTC
+    - cron: "0 6 * * 1"
   workflow_dispatch: {}
 
 permissions:
@@ -21,27 +16,22 @@ permissions:
 
 env:
   UPSTREAM_REPO: sting8k/piggery
-  PATCH_PATH: docs/winport-series/0001-winport-windows-amd64-port-of-v0.5.3-build-tag-split.patch
 
 jobs:
   track:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout fork (full history)
+      - name: Checkout fork main (full history)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Stash patch outside the working tree
-        run: |
-          set -euo pipefail
-          # The fork default branch carries the patch; the automation branch below
-          # starts from the upstream tag, which does NOT contain it.
-          test -f "$PATCH_PATH"
-          cp "$PATCH_PATH" "$RUNNER_TEMP/winport.patch"
-          echo "patch stashed ($(wc -l < "$RUNNER_TEMP/winport.patch") lines)"
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
-      - name: Resolve latest upstream tag
+      - name: Fetch upstream and check for new release
         id: detect
         env:
           GH_TOKEN: ${{ github.token }}
@@ -49,199 +39,109 @@ jobs:
           set -euo pipefail
           git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
           git fetch upstream --tags --quiet
-          # gh release view (not `git tag --merged upstream/HEAD`): the remote HEAD
-          # ref is not created by fetch --tags and releases are the real trigger.
           LATEST=$(gh release view --repo "$UPSTREAM_REPO" --json tagName -q .tagName)
           echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
-          echo "Upstream latest tag: $LATEST"
+          echo "Upstream latest release: $LATEST"
 
-          BRANCH="automation/winport-rebase-$LATEST"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          # Skip only when the PR is open AND main already absorbed it (auto-merge
-          # landed on a previous run). A bare open PR is NOT a reason to skip:
-          # the run must still ff main + tag if main lacks the PR head.
-          if gh pr list --repo "$GITHUB_REPOSITORY" --state open --search "$LATEST in:title" | grep -q .; then
-            PRHEAD=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --search "$LATEST in:title" --json headRefOid --jq ".[0].headRefOid")
-            if git merge-base --is-ancestor "$PRHEAD" "refs/remotes/origin/main" 2>/dev/null; then
-              echo "PR for $LATEST open and already absorbed by main -- nothing to do."
-              echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
-            fi
-            echo "PR for $LATEST open but main lacks its head -- proceeding."
+          # Skip if already built
+          TAG="${LATEST}+winport"
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists -- nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          if gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$LATEST in:title" | grep -q .; then
-            echo "Issue for $LATEST already open — nothing to do."; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          # If the automation branch exists but has no open PR (previous run failed
-          # before gh pr create), delete it so this run starts fresh. If a PR DOES
-          # exist, the PR-check above already skipped this run.
-          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-            echo "Stale branch $BRANCH exists without open PR -- deleting for a fresh rebase."
-            git push origin --delete "$BRANCH"
+          if gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" 2>/dev/null | grep -q .; then
+            echo "Release ${TAG} already published -- nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
-      - name: Try automated rebase onto the new tag
+      - name: Merge upstream into main (winport included)
+        id: merge
         if: steps.detect.outputs.skip == 'false'
-        id: rebase
         run: |
-          set -uo pipefail
-          # Start from the pristine upstream tag — NOT fork main, which already
-          # carries the winport state (applying the patch there would no-op).
+          set -euo pipefail
+          LATEST="${{ steps.detect.outputs.latest }}"
+          BRANCH="automation/merge-${LATEST}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           git config user.name "winport-automation"
           git config user.email "winport-automation@users.noreply.github.com"
-          git checkout -b "${{ steps.detect.outputs.branch }}" "${{ steps.detect.outputs.latest }}"
-
-          echo "--- git apply --3way ---"
-          if git apply --3way "$RUNNER_TEMP/winport.patch"; then
-            echo "apply=ok" >> "$GITHUB_OUTPUT"
+          git checkout -b "$BRANCH" origin/main
+          if git merge "v${LATEST#v}" --no-edit 2>/dev/null || git merge "$LATEST" --no-edit 2>/dev/null; then
+            echo "merge=clean" >> "$GITHUB_OUTPUT"
           else
-            git apply --3way "$RUNNER_TEMP/winport.patch" > apply.log 2>&1 || true
+            # Get conflict details for the issue
+            git diff --name-only --diff-filter=U > conflict-files.txt || true
             {
-              echo "### git apply --3way output"
+              echo "## Merge conflict merging upstream $LATEST into fork main"
+              echo ""
+              echo "Conflicting files:"
               echo '```'
-              cat apply.log
+              cat conflict-files.txt
               echo '```'
-              echo "### git status"
-              echo '```'
-              git status --short
-              echo '```'
-              echo "### git diff --stat (partial)"
-              echo '```'
-              git diff --stat
-              echo '```'
+              echo ""
+              echo "Resolve manually, push the tag when verified."
             } > conflict-report.md
-            echo "apply=conflict" >> "$GITHUB_OUTPUT"
+            echo "merge=conflict" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Setup Go
-        if: steps.rebase.outputs.apply == 'ok'
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Gate 1 — linux build (no unix behavior change)
-        if: steps.rebase.outputs.apply == 'ok'
+      - name: Gate — linux build
+        if: steps.merge.outputs.merge == 'clean'
         run: |
           set -euo pipefail
           CGO_ENABLED=0 GOOS=linux go build ./cmd/piggery
           echo "linux build: PASS" > gate-report.md
 
-      - name: Gate 2 — windows build
-        if: steps.rebase.outputs.apply == 'ok'
+      - name: Gate — windows build
+        if: steps.merge.outputs.merge == 'clean'
         run: |
           set -euo pipefail
           VERSION="${{ steps.detect.outputs.latest }}+winport"
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+          CGO_ENABLED=0 GOOS=windows GOARmd64 \
             go build -ldflags "-X github.com/sting8k/piggery/internal/cli.Version=${VERSION}" \
             -o piggery-windows-amd64.exe ./cmd/piggery
           SHA=$(sha256sum piggery-windows-amd64.exe | cut -d' ' -f1)
-          {
-            echo "windows build: PASS (${VERSION})"
-            echo "binary sha256: \`$SHA\`"
-          } >> gate-report.md
-          rm piggery-windows-amd64.exe # the release build happens in build-windows.yml
+          echo "windows build: PASS (${VERSION})" >> gate-report.md
+          echo "binary sha256: \`$SHA\`" >> gate-report.md
+          rm piggery-windows-amd64.exe
 
-      - name: Open PR (clean rebase)
-        if: steps.rebase.outputs.apply == 'ok'
+      - name: Push merge + create tag + release
+        if: steps.merge.outputs.merge == 'clean'
         env:
           GH_TOKEN: ${{ github.token }}
           LATEST: ${{ steps.detect.outputs.latest }}
           BRANCH: ${{ steps.detect.outputs.branch }}
         run: |
           set -euo pipefail
-          # merge main (carries patch + workflows) so the PR is a clean superset,
-          # not diverged from the tag the branch started from
-          git merge main --no-edit
-          # capture gate logs for the PR body BEFORE removing the file
-          GATE_LOGS=$(cat gate-report.md)
-          rm -f gate-report.md
-          git add -A
-          git commit -m "winport: apply patch series onto ${LATEST}"
+          TAG="${LATEST}+winport"
           git push origin "$BRANCH"
-          {
-            echo "${LATEST}+winport ready — review & merge"
-            echo ""
-            echo "All gates passed on the automation branch:"
-            echo ""
-            echo "$GATE_LOGS"
-            echo ""
-            echo "## To release"
-            echo "1. Review the diff (especially upstream changes touching winported files)."
-            echo "2. Merge this PR into \`main\`."
-            echo "3. Push tag \`${LATEST}+winport\` → build-windows.yml publishes the release asset."
-            echo "4. On the machine: run scripts/update-piggery.ps1"
-          } > pr-body.md
-          # create the PR via the REST API. If one already exists for this
-          # head (previous run), GitHub 422s -- treat as success and reuse it.
-          if ! gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" \
-            -f title="${LATEST}+winport ready" \
-            -f head="$BRANCH" \
-            -f base="main" \
-            -F body="$(cat pr-body.md)" 2>pr-error.log; then
-            if grep -q "already exists" pr-error.log; then
-              echo "PR for $BRANCH already exists -- reusing it."
-            else
-              cat pr-error.log >&2; exit 1
-            fi
-          fi
-          rm -f pr-error.log
-
-      - name: Auto-merge main (fast-forward to the automation branch)
-        if: steps.rebase.outputs.apply == 'ok'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # The automation branch is ahead-only of main (merge main ran in the PR
-          # step), so a fast-forward ref update is a true merge. If main moved,
-          # force=false refuses -- the PR stays open for manual review (safety).
+          # ff main to the merge commit
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" \
             -f sha="$(git rev-parse HEAD)" -F force=false
           echo "main fast-forwarded to $(git rev-parse HEAD)"
-          # PR served its audit purpose; auto-merge landed -- close it (not merged-via-PR,
-          # but via ff, so closed-not-merged is expected and correct here)
-          gh pr list --repo "$GITHUB_REPOSITORY" --state open --head "$BRANCH" --json number --jq ".[].number" | while read -r N; do gh pr close "$N" --repo "$GITHUB_REPOSITORY" --comment "Auto-merged via fast-forward by track-upstream automation."; done
+          # Push tag -> triggers build-windows.yml for the release
+          git tag "$TAG" HEAD
+          git push origin "$TAG"
+          echo "Tag $TAG pushed -> build-windows.yml will publish the release."
+          echo ""
+          cat gate-report.md
 
-      - name: Auto-tag and fire the release build
-        if: steps.rebase.outputs.apply == 'ok'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          LATEST: ${{ steps.detect.outputs.latest }}
-        run: |
-          set -euo pipefail
-          TAG="${LATEST}+winport"
-          # idempotent: skip if the tag already exists (retry after partial run)
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" > /dev/null 2>&1; then
-            echo "Tag $TAG already exists -- build already triggered or done."
-            exit 0
-          fi
-          TAGOBJ=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
-            -f tag="$TAG" \
-            -f message="Windows-amd64 winport build of ${LATEST} (automation pipeline)" \
-            -f object="$(git rev-parse HEAD)" \
-            -f type=commit --jq .sha)
-          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-            -f ref="refs/tags/$TAG" -f sha="$TAGOBJ" > /dev/null
-          echo "Tag $TAG pushed -- build-windows.yml is now building the release."
-          echo "Machine upgrade afterwards (no token needed):"
-          echo "  powershell -File update-piggery.ps1 -ForkOwner dinhhung893"
-
-      - name: Open issue (conflict — manual rebase needed)
-        if: steps.rebase.outputs.apply == 'conflict'
+      - name: Open issue (merge conflict — manual resolution needed)
+        if: steps.merge.outputs.merge == 'conflict'
         env:
           GH_TOKEN: ${{ github.token }}
           LATEST: ${{ steps.detect.outputs.latest }}
         run: |
           {
-            echo "${LATEST} needs manual winport rebase"
+            echo "$LATEST needs manual winport merge"
             echo ""
-            echo "The winport patch does NOT apply cleanly onto ${LATEST}."
-            echo "Checkout the tag locally, resolve the conflicts with an agent session,"
-            echo "then push the tag when verified."
+            echo "Merging upstream $LATEST into fork main hit merge conflicts."
+            echo "Checkout main, merge the upstream tag manually, push the tag when verified."
             echo ""
             cat conflict-report.md
           } > issue-body.md
           gh issue create \
             --repo "$GITHUB_REPOSITORY" \
-            --title "${LATEST} needs manual winport rebase" \
+            --title "$LATEST needs manual winport merge" \
             --body-file issue-body.md
