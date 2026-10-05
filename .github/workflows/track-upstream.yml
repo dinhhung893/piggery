@@ -1,0 +1,153 @@
+name: track-upstream
+
+# Weekly cron: fetch upstream, merge into fork main (which already carries the winport),
+# then tag + build a new Windows release. No patch-apply needed — main IS the winport.
+# If merge conflicts arise, an issue is created for manual resolution.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  UPSTREAM_REPO: sting8k/piggery
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork main (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch upstream and check for new release
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream --tags --quiet
+          LATEST=$(gh release view --repo "$UPSTREAM_REPO" --json tagName -q .tagName)
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Upstream latest release: $LATEST"
+
+          # Skip if already built
+          TAG="${LATEST}+winport"
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists -- nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" 2>/dev/null | grep -q .; then
+            echo "Release ${TAG} already published -- nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Skip if an open issue for this tag already exists (avoid duplicates)
+          if gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "${LATEST} in:title" | grep -q .; then
+            echo "Issue for ${LATEST} already open -- nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream into main (winport included)
+        id: merge
+        if: steps.detect.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          LATEST="${{ steps.detect.outputs.latest }}"
+          BRANCH="automation/merge-${LATEST}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          git config user.name "winport-automation"
+          git config user.email "winport-automation@users.noreply.github.com"
+          git checkout -b "$BRANCH" origin/main
+          if git merge "v${LATEST#v}" --no-edit 2>/dev/null || git merge "$LATEST" --no-edit 2>/dev/null; then
+            echo "merge=clean" >> "$GITHUB_OUTPUT"
+          else
+            # Get conflict details for the issue
+            git diff --name-only --diff-filter=U > conflict-files.txt || true
+            {
+              echo "## Merge conflict merging upstream $LATEST into fork main"
+              echo ""
+              echo "Conflicting files:"
+              echo '```'
+              cat conflict-files.txt
+              echo '```'
+              echo ""
+              echo "Resolve manually, push the tag when verified."
+            } > conflict-report.md
+            echo "merge=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Gate — linux build
+        if: steps.merge.outputs.merge == 'clean'
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 GOOS=linux go build ./cmd/piggery
+          echo "linux build: PASS" > gate-report.md
+
+      - name: Gate — windows build
+        if: steps.merge.outputs.merge == 'clean'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.detect.outputs.latest }}+winport"
+          CGO_ENABLED=0 GOOS=windows GOARmd64 \
+            go build -ldflags "-X github.com/sting8k/piggery/internal/cli.Version=${VERSION}" \
+            -o piggery-windows-amd64.exe ./cmd/piggery
+          SHA=$(sha256sum piggery-windows-amd64.exe | cut -d' ' -f1)
+          echo "windows build: PASS (${VERSION})" >> gate-report.md
+          echo "binary sha256: \`$SHA\`" >> gate-report.md
+          rm piggery-windows-amd64.exe
+
+      - name: Push merge + create tag + release
+        if: steps.merge.outputs.merge == 'clean'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.detect.outputs.latest }}
+          BRANCH: ${{ steps.detect.outputs.branch }}
+        run: |
+          set -euo pipefail
+          TAG="${LATEST}+winport"
+          git push origin "$BRANCH"
+          # ff main to the merge commit
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" \
+            -f sha="$(git rev-parse HEAD)" -F force=false
+          echo "main fast-forwarded to $(git rev-parse HEAD)"
+          # Push tag -> triggers build-windows.yml for the release
+          git tag "$TAG" HEAD
+          git push origin "$TAG"
+          echo "Tag $TAG pushed -> build-windows.yml will publish the release."
+          echo ""
+          cat gate-report.md
+
+      - name: Open issue (merge conflict — manual resolution needed)
+        if: steps.merge.outputs.merge == 'conflict'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.detect.outputs.latest }}
+        run: |
+          {
+            echo "$LATEST needs manual winport merge"
+            echo ""
+            echo "Merging upstream $LATEST into fork main hit merge conflicts."
+            echo "Checkout main, merge the upstream tag manually, push the tag when verified."
+            echo ""
+            cat conflict-report.md
+          } > issue-body.md
+          gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$LATEST needs manual winport merge" \
+            --body-file issue-body.md
